@@ -12,21 +12,44 @@ from fastapi.templating import Jinja2Templates
 
 from .config import get_settings
 from .database import Database
-from .schemas import ChatRequest, ChatResponse, RefreshResponse, StatusResponse, UploadResponse
+from .schemas import (
+    ChatRequest,
+    ChatResponse,
+    OnboardingActionResponse,
+    OnboardingOtpRequest,
+    OnboardingOtpVerificationRequest,
+    OnboardingPricingRequest,
+    OnboardingSubmissionRequest,
+    RefreshResponse,
+    StatusResponse,
+    UploadResponse,
+)
 from .services.knowledge_base import KnowledgeBaseService
+from .services.onboarding import OnboardingService
 
 settings = get_settings()
 database = Database(settings.database_path, journal_mode=settings.sqlite_journal_mode)
 knowledge_base = KnowledgeBaseService(settings, database)
+onboarding = OnboardingService(settings)
 knowledge_base.initialize()
-scheduler = BackgroundScheduler(timezone="Africa/Johannesburg")
+scheduler = BackgroundScheduler(timezone=settings.refresh_timezone)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     knowledge_base.initialize()
     if settings.enable_scheduler and not scheduler.running:
-        scheduler.add_job(knowledge_base.start_refresh_background, "interval", hours=settings.refresh_interval_hours)
+        scheduler.add_job(
+            knowledge_base.start_refresh_background,
+            "cron",
+            id="daily_kb_refresh",
+            replace_existing=True,
+            hour=settings.refresh_hour_local,
+            minute=settings.refresh_minute_local,
+            coalesce=True,
+            max_instances=1,
+            misfire_grace_time=3600,
+        )
         scheduler.start()
     if settings.auto_refresh_on_startup and not knowledge_base.has_content():
         knowledge_base.start_refresh_background()
@@ -72,6 +95,66 @@ async def chat(request: ChatRequest) -> ChatResponse:
 @app.get("/api/status", response_model=StatusResponse)
 async def status() -> StatusResponse:
     return StatusResponse(**knowledge_base.status())
+
+
+@app.get("/api/onboarding/config")
+async def onboarding_config() -> dict:
+    return onboarding.get_config()
+
+
+@app.post("/api/onboarding/send-otp", response_model=OnboardingActionResponse)
+async def onboarding_send_otp(request: OnboardingOtpRequest) -> OnboardingActionResponse:
+    try:
+        payload = onboarding.send_otp(request.email)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    return OnboardingActionResponse(ok=True, message=payload.get("message", "Verification code sent."), payload=payload)
+
+
+@app.post("/api/onboarding/verify-otp", response_model=OnboardingActionResponse)
+async def onboarding_verify_otp(request: OnboardingOtpVerificationRequest) -> OnboardingActionResponse:
+    try:
+        payload = onboarding.verify_otp(request.email, request.code)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    status_code = 200 if payload.get("verified") else 400
+    if not payload.get("verified"):
+        raise HTTPException(status_code=status_code, detail=payload.get("message", "Verification failed."))
+    return OnboardingActionResponse(ok=True, message=payload.get("message", "Email verified."), payload=payload)
+
+
+@app.get("/api/onboarding/rate-card")
+async def onboarding_rate_card() -> dict:
+    try:
+        return onboarding.get_rate_card()
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+
+@app.post("/api/onboarding/quote", response_model=OnboardingActionResponse)
+async def onboarding_quote(request: OnboardingPricingRequest) -> OnboardingActionResponse:
+    try:
+        payload = onboarding.quote(request.gp_category, request.gp_hours_band, request.gp_intrapartum_basis)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    return OnboardingActionResponse(ok=True, message="Live quote loaded.", payload=payload)
+
+
+@app.post("/api/onboarding/submit", response_model=OnboardingActionResponse)
+async def onboarding_submit(request: OnboardingSubmissionRequest) -> OnboardingActionResponse:
+    try:
+        payload = onboarding.submit_application(request.model_dump())
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    return OnboardingActionResponse(ok=True, message=payload.get("message", "Application submitted."), payload=payload)
 
 
 @app.post("/api/refresh", response_model=RefreshResponse)

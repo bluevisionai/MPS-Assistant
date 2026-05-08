@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import threading
 from datetime import datetime, timezone
@@ -138,12 +139,23 @@ class KnowledgeBaseService:
         if refused:
             direct_answer = refusal
 
+        direct_answer = _humanize_section_text(direct_answer)
+        plain_english = _humanize_section_text(parsed["plain_english"].strip())
+        practical_next_steps = _humanize_section_text(parsed["practical_next_steps"].strip())
+        limitations = _humanize_section_text(parsed["limitations"].strip())
+        direct_answer = _collapse_short_bullets(direct_answer, max_items=3)
+        plain_english = _collapse_short_bullets(plain_english, max_items=3)
+        limitations = _collapse_short_bullets(limitations, max_items=2)
+        plain_english = _drop_redundant_section(plain_english, direct_answer)
+        limitations = _drop_redundant_section(limitations, plain_english or direct_answer)
+        practical_next_steps = _soften_short_steps(practical_next_steps)
+
         return ChatResponse(
             direct_answer=direct_answer,
             sources=self._build_citations(retrieved, numbers),
-            plain_english=parsed["plain_english"].strip(),
-            practical_next_steps=parsed["practical_next_steps"].strip(),
-            limitations=parsed["limitations"].strip(),
+            plain_english=plain_english,
+            practical_next_steps=practical_next_steps,
+            limitations=limitations,
             refused=refused,
         )
 
@@ -498,3 +510,80 @@ def _looks_like_refusal(answer_text: str, refusal_text: str) -> bool:
         return normalized
 
     return normalize(answer_text) == normalize(refusal_text)
+
+
+def _humanize_section_text(text: str) -> str:
+    if not text:
+        return ""
+
+    cleaned = text.strip()
+    replacements = [
+        (r"(?i)^the excerpts show that\s+", ""),
+        (r"(?i)^the excerpts show\s+", ""),
+        (r"(?i)^the excerpts say that\s+", ""),
+        (r"(?i)^the excerpts say\s+", ""),
+        (r"(?i)^the information provided says that\s+", ""),
+        (r"(?i)^the information provided says\s+", ""),
+        (r"(?i)^the information provided indicates that\s+", ""),
+        (r"(?i)^the provided information says that\s+", ""),
+        (r"(?i)^the provided information says\s+", ""),
+        (r"(?i)^based on the provided sources,\s*", ""),
+        (r"(?i)^based on the excerpts,\s*", ""),
+    ]
+
+    for pattern, replacement in replacements:
+        cleaned = re.sub(pattern, replacement, cleaned)
+
+    cleaned = re.sub(r"(?<=\w)—(?=\w)", " — ", cleaned)
+    cleaned = re.sub(r"(?<=\w)–(?=\w)", " – ", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    cleaned = re.sub(r"[ \t]+", " ", cleaned)
+    cleaned = re.sub(r" \n", "\n", cleaned)
+    return cleaned.strip()
+
+
+def _drop_redundant_section(text: str, anchor_text: str) -> str:
+    if not text or not anchor_text:
+        return text
+
+    text_terms = set(_significant_terms(text))
+    anchor_terms = set(_significant_terms(anchor_text))
+    if not text_terms or not anchor_terms:
+        return text
+
+    overlap = len(text_terms & anchor_terms) / max(1, len(text_terms))
+    if overlap >= 0.82:
+        return ""
+
+    return text
+
+
+def _soften_short_steps(text: str) -> str:
+    if not text.startswith("- "):
+        return text
+
+    steps = [line[2:].strip() for line in text.splitlines() if line.strip().startswith("- ")]
+    if not steps or len(steps) > 2:
+        return text
+
+    sentence = " ".join(steps)
+    sentence = re.sub(r"\s+", " ", sentence).strip()
+    return sentence
+
+
+def _collapse_short_bullets(text: str, max_items: int) -> str:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return text
+    if not all(line.startswith("- ") for line in lines):
+        return text
+    if len(lines) > max_items:
+        return text
+
+    parts = []
+    for line in lines:
+        sentence = line[2:].strip()
+        if sentence and sentence[-1] not in ".!?":
+            sentence = f"{sentence}."
+        parts.append(sentence)
+    return " ".join(parts).strip()

@@ -13,24 +13,11 @@
     />
     <link rel="stylesheet" href="{{ url_for('static', path='styles.css') }}" />
   </head>
-  <body>
+  <body data-app-name="{{ app_name }}">
     <div class="site-backdrop" aria-hidden="true"></div>
     <div class="site-overlay" aria-hidden="true"></div>
 
     <main class="experience-shell">
-      <section class="intro-card">
-        <p class="eyebrow">Medical Protection South Africa</p>
-        <h2>Ask naturally. Get grounded answers from MPS sources only.</h2>
-        <p class="intro-copy">
-          MPS Assistant keeps the conversation flowing like a chat app, but every answer still comes only from the
-          official MPS South Africa website, downloaded resources, and anything you upload into the knowledge base.
-        </p>
-        <div class="intro-actions">
-          <a class="ghost-link" href="{{ seed_url }}" target="_blank" rel="noreferrer">Open official MPS South Africa</a>
-          <span class="source-badge">Cited pages, forms, PDFs, guides, and uploads only</span>
-        </div>
-      </section>
-
       <div class="chatbox-shell is-open" id="chatbox-shell">
         <button class="chat-launcher hidden" id="chat-launcher" type="button">Open MPS Assistant</button>
 
@@ -43,72 +30,36 @@
                 alt="Medical Protection logo"
               />
               <div class="brand-copy">
-                <p class="eyebrow">Official MPS South Africa sources only</p>
                 <h1>{{ app_name }}</h1>
               </div>
             </div>
 
             <div class="header-actions">
               <button class="icon-button" id="new-chat" type="button">New chat</button>
-              <button class="icon-button" id="toggle-tools" type="button" aria-expanded="false">Tools</button>
               <button class="icon-button" id="toggle-chatbox" type="button" aria-expanded="true">Hide</button>
             </div>
           </header>
 
-          <aside class="tools-drawer hidden" id="tools-drawer" aria-label="Knowledge base tools">
-            <section class="drawer-panel">
-              <h2>Knowledge base status</h2>
-              <dl class="stats-grid" id="stats-grid">
-                <div>
-                  <dt>Sources</dt>
-                  <dd id="source-count">{{ status.source_count }}</dd>
-                </div>
-                <div>
-                  <dt>Chunks</dt>
-                  <dd id="chunk-count">{{ status.chunk_count }}</dd>
-                </div>
-                <div>
-                  <dt>Refreshing</dt>
-                  <dd id="refresh-flag">{{ "Yes" if status.refresh_in_progress else "No" }}</dd>
-                </div>
-                <div>
-                  <dt>Last refresh</dt>
-                  <dd id="last-refresh">{{ status.last_refresh_completed_at or "Not yet" }}</dd>
-                </div>
-              </dl>
-              <button class="refresh-button" id="refresh-button" type="button">Refresh official site</button>
-              <p class="status-note" id="refresh-note"></p>
-            </section>
-
-            <section class="drawer-panel">
-              <h2>Upload extra files</h2>
-              <p class="small-copy">Accepted: PDF, DOCX, XLSX, CSV, TXT, PPTX, and similar document formats.</p>
-              <input id="upload-input" type="file" multiple />
-              <button class="secondary-button secondary-button-strong" id="upload-button" type="button">
-                Ingest uploaded files
-              </button>
-              <p class="status-note" id="upload-note"></p>
-            </section>
-
-            <section class="drawer-panel guardrail-panel">
-              <h2>Guardrails</h2>
-              <ul class="guardrail-list">
-                <li>No general knowledge answers.</li>
-                <li>No unofficial sources.</li>
-                <li>No invented rules, fees, dates, benefits, or cover terms.</li>
-                <li>High-stakes topics stay conservative and cite sources.</li>
-              </ul>
-            </section>
-          </aside>
-
           <div class="chatbox-body">
+            <div class="chatbox-toolbar">
+              <div class="mode-switch" role="tablist" aria-label="Assistant mode">
+                <button class="mode-pill is-active" id="mode-knowledge" type="button" aria-selected="true">
+                  Ask MPS
+                </button>
+                <button class="mode-pill" id="mode-apply" type="button" aria-selected="false">
+                  Apply in chat
+                </button>
+              </div>
+              <p class="mode-caption" id="mode-caption">Grounded answers from official MPS sources.</p>
+            </div>
+
             <div class="messages-stage" id="messages-stage">
               <div class="messages-list" id="chat-messages" aria-live="polite"></div>
               <div class="typing-indicator hidden" id="typing-indicator">
                 <span class="typing-dot"></span>
                 <span class="typing-dot"></span>
                 <span class="typing-dot"></span>
-                <p>MPS Assistant is checking the knowledge base.</p>
+                <p>processing ...</p>
               </div>
             </div>
 
@@ -119,493 +70,17 @@
                   id="question-input"
                   name="question"
                   rows="1"
-                  placeholder="Ask about membership, applications, complaints, or official MPS wording..."
+                  placeholder="Ask about membership, applications, complaints, or anything MPS related ..."
                 ></textarea>
                 <button class="primary-button send-button" id="ask-button" type="submit">Send</button>
               </div>
-              <p class="composer-note">Official MPS South Africa sources and uploaded documents only.</p>
+              <p class="composer-note hidden" id="composer-note"></p>
             </form>
           </div>
         </section>
       </div>
     </main>
 
-    <script>
-      const STORAGE_KEY = "mps-assistant-chat-v2";
-      const MAX_STORED_MESSAGES = 24;
-      const ASSISTANT_WELCOME =
-        "Ask about MPS South Africa. I cite only official MPS material.";
-      const STARTER_QUESTIONS = [
-        "How do I apply for student membership?",
-        "What should I do if I receive a complaint?",
-        "What file types can be uploaded in the application?",
-      ];
-
-      const chatForm = document.getElementById("chat-form");
-      const askButton = document.getElementById("ask-button");
-      const questionInput = document.getElementById("question-input");
-      const refreshButton = document.getElementById("refresh-button");
-      const uploadButton = document.getElementById("upload-button");
-      const uploadInput = document.getElementById("upload-input");
-      const toggleChatbox = document.getElementById("toggle-chatbox");
-      const toggleTools = document.getElementById("toggle-tools");
-      const toolsDrawer = document.getElementById("tools-drawer");
-      const newChatButton = document.getElementById("new-chat");
-      const chatboxShell = document.getElementById("chatbox-shell");
-      const chatLauncher = document.getElementById("chat-launcher");
-      const messagesStage = document.getElementById("messages-stage");
-      const messagesList = document.getElementById("chat-messages");
-      const typingIndicator = document.getElementById("typing-indicator");
-      let isPending = false;
-
-      let conversation = loadConversation();
-
-      function loadConversation() {
-        try {
-          const raw = sessionStorage.getItem(STORAGE_KEY);
-          if (!raw) {
-            return [];
-          }
-          const parsed = JSON.parse(raw);
-          if (!Array.isArray(parsed)) {
-            return [];
-          }
-          return parsed
-            .filter((item) => item && (item.role === "user" || item.role === "assistant") && typeof item.content === "string")
-            .slice(-MAX_STORED_MESSAGES);
-        } catch (error) {
-          return [];
-        }
-      }
-
-      function saveConversation() {
-        conversation = conversation.slice(-MAX_STORED_MESSAGES);
-        sessionStorage.setItem(STORAGE_KEY, JSON.stringify(conversation));
-      }
-
-      function setText(id, text) {
-        document.getElementById(id).textContent = text || "";
-      }
-
-      function setChatboxOpen(isOpen) {
-        chatboxShell.classList.toggle("is-open", isOpen);
-        chatboxShell.classList.toggle("is-collapsed", !isOpen);
-        toggleChatbox.setAttribute("aria-expanded", String(isOpen));
-        chatLauncher.classList.toggle("hidden", isOpen);
-        if (isOpen) {
-          questionInput.focus();
-        }
-      }
-
-      function setToolsOpen(isOpen) {
-        toolsDrawer.classList.toggle("hidden", !isOpen);
-        toggleTools.setAttribute("aria-expanded", String(isOpen));
-      }
-
-      function createElement(tag, className, text) {
-        const element = document.createElement(tag);
-        if (className) {
-          element.className = className;
-        }
-        if (text !== undefined) {
-          element.textContent = text;
-        }
-        return element;
-      }
-
-      function createStarterChips() {
-        const wrapper = createElement("div", "starter-chips");
-        for (const question of STARTER_QUESTIONS) {
-          const button = createElement("button", "starter-chip", question);
-          button.type = "button";
-          button.dataset.question = question;
-          button.disabled = isPending;
-          button.addEventListener("click", async () => {
-            await sendQuestion(question);
-          });
-          wrapper.appendChild(button);
-        }
-        return wrapper;
-      }
-
-      function appendTextBlocks(container, text) {
-        const normalized = (text || "").trim();
-        if (!normalized) {
-          return;
-        }
-
-        const blocks = normalized.split(/\n\s*\n/);
-        for (const block of blocks) {
-          const citationOnly = block.trim().match(/^(?:\[\d+\]\s*)+$/);
-          if (citationOnly && container.lastElementChild) {
-            container.lastElementChild.textContent = `${container.lastElementChild.textContent} ${block.trim()}`.trim();
-            continue;
-          }
-
-          const lines = block.split("\n").map((line) => line.trim()).filter(Boolean);
-          if (!lines.length) {
-            continue;
-          }
-
-          const allBullets = lines.every((line) => line.startsWith("- "));
-          if (allBullets) {
-            const list = createElement("ul", "message-list");
-            for (const line of lines) {
-              const item = createElement("li", "", line.slice(2).trim());
-              list.appendChild(item);
-            }
-            container.appendChild(list);
-            continue;
-          }
-
-          const paragraph = createElement("p", "message-copy", lines.join("\n"));
-          container.appendChild(paragraph);
-        }
-      }
-
-      function renderSourceCards(sources) {
-        const wrapper = createElement("div", "source-stack");
-        for (const source of sources) {
-          const card = createElement("div", "source-card");
-          const title = createElement(
-            "p",
-            "source-title",
-            `[${source.number}] ${source.document_title || source.page_title || source.file_name || "MPS source"}`
-          );
-          card.appendChild(title);
-
-          const metaParts = [
-            source.section_heading ? `Section: ${source.section_heading}` : "",
-            source.page_number ? `Page: ${source.page_number}` : "",
-            source.file_name ? `File: ${source.file_name}` : "",
-          ].filter(Boolean);
-
-          if (metaParts.length) {
-            card.appendChild(createElement("p", "source-meta", metaParts.join(" | ")));
-          }
-
-          if (source.url) {
-            const link = createElement("a", "source-link", source.url);
-            link.href = source.url;
-            link.target = "_blank";
-            link.rel = "noreferrer";
-            card.appendChild(link);
-          }
-
-          wrapper.appendChild(card);
-        }
-        return wrapper;
-      }
-
-      function renderAssistantResponse(response) {
-        const bubble = createElement(
-          "div",
-          `message-bubble assistant-bubble ${response.refused ? "assistant-bubble-refused" : ""}`
-        );
-
-        const directBlock = createElement("div", "message-block message-block-primary");
-        appendTextBlocks(directBlock, response.direct_answer);
-        bubble.appendChild(directBlock);
-
-        if (response.plain_english) {
-          const section = createElement("section", "message-section");
-          section.appendChild(createElement("p", "message-section-title", "Plain-English interpretation"));
-          appendTextBlocks(section, response.plain_english);
-          bubble.appendChild(section);
-        }
-
-        if (response.practical_next_steps) {
-          const section = createElement("section", "message-section");
-          section.appendChild(createElement("p", "message-section-title", "Practical next steps"));
-          appendTextBlocks(section, response.practical_next_steps);
-          bubble.appendChild(section);
-        }
-
-        if (response.limitations) {
-          const section = createElement("section", "message-section");
-          section.appendChild(
-            createElement(
-              "p",
-              "message-section-title",
-              response.refused ? "Why I cannot answer confidently" : "What to confirm with MPS"
-            )
-          );
-          appendTextBlocks(section, response.limitations);
-          bubble.appendChild(section);
-        }
-
-        if (response.sources && response.sources.length) {
-          const details = createElement("details", "message-sources");
-          const summary = createElement("summary", "", `Sources used (${response.sources.length})`);
-          details.appendChild(summary);
-          details.appendChild(renderSourceCards(response.sources));
-          bubble.appendChild(details);
-        }
-
-        return bubble;
-      }
-
-      function renderMessage(message) {
-        const article = createElement("article", `message-row message-row-${message.role}`);
-
-        if (message.role === "assistant") {
-          article.appendChild(createElement("div", "message-avatar", "MP"));
-        }
-
-        const content = createElement("div", `message-stack message-stack-${message.role}`);
-        if (message.role === "assistant") {
-          const label = createElement("p", "message-role", "MPS Assistant");
-          content.appendChild(label);
-        }
-
-        if (message.role === "assistant" && message.response) {
-          content.appendChild(renderAssistantResponse(message.response));
-        } else {
-          const bubble = createElement("div", `message-bubble ${message.role === "user" ? "user-bubble" : "assistant-bubble"}`);
-          appendTextBlocks(bubble, message.content);
-          if (message.isWelcome) {
-            const promptBlock = createElement("div", "welcome-prompt");
-            promptBlock.appendChild(createElement("p", "starter-title", "Try a question"));
-            promptBlock.appendChild(createStarterChips());
-            bubble.appendChild(promptBlock);
-          }
-          content.appendChild(bubble);
-        }
-
-        article.appendChild(content);
-        messagesList.appendChild(article);
-      }
-
-      function scrollLatestMessageIntoView() {
-        requestAnimationFrame(() => {
-          const rows = messagesList.querySelectorAll(".message-row");
-          const lastRow = rows[rows.length - 1];
-          if (lastRow) {
-            lastRow.scrollIntoView({ block: "start", behavior: "smooth" });
-            return;
-          }
-          messagesStage.scrollTop = messagesStage.scrollHeight;
-        });
-      }
-
-      function renderConversation(scrollMode = "end") {
-        messagesList.innerHTML = "";
-
-        const welcome = {
-          role: "assistant",
-          content: ASSISTANT_WELCOME,
-          isWelcome: true,
-        };
-        renderMessage(welcome);
-
-        for (const message of conversation) {
-          renderMessage(message);
-        }
-
-        messagesStage.classList.toggle("is-empty", conversation.length === 0);
-        if (scrollMode === "top") {
-          requestAnimationFrame(() => {
-            messagesStage.scrollTop = 0;
-          });
-          return;
-        }
-        if (scrollMode === "latest") {
-          scrollLatestMessageIntoView();
-          return;
-        }
-        scrollMessagesToBottom();
-      }
-
-      function scrollMessagesToBottom() {
-        requestAnimationFrame(() => {
-          messagesStage.scrollTop = messagesStage.scrollHeight;
-        });
-      }
-
-      function autoResizeComposer() {
-        questionInput.style.height = "auto";
-        questionInput.style.height = `${Math.min(questionInput.scrollHeight, 180)}px`;
-      }
-
-      function buildAssistantHistoryContent(response) {
-        const parts = [];
-        if (response.direct_answer) {
-          parts.push(`Direct answer: ${response.direct_answer}`);
-        }
-        if (response.plain_english) {
-          parts.push(`Plain-English interpretation: ${response.plain_english}`);
-        }
-        if (response.practical_next_steps) {
-          parts.push(`Practical next steps: ${response.practical_next_steps}`);
-        }
-        if (response.limitations) {
-          parts.push(`What to confirm with MPS: ${response.limitations}`);
-        }
-        return parts.join("\n\n");
-      }
-
-      function setPendingState(pending) {
-        isPending = pending;
-        askButton.disabled = pending;
-        askButton.textContent = pending ? "Checking..." : "Send";
-        questionInput.disabled = pending;
-        newChatButton.disabled = pending;
-        toggleTools.disabled = pending;
-        document.querySelectorAll(".starter-chip").forEach((button) => {
-          button.disabled = pending;
-        });
-      }
-
-      async function refreshStatus() {
-        const response = await fetch("/api/status");
-        const status = await response.json();
-        setText("source-count", status.source_count);
-        setText("chunk-count", status.chunk_count);
-        setText("refresh-flag", status.refresh_in_progress ? "Yes" : "No");
-        setText("last-refresh", status.last_refresh_completed_at || "Not yet");
-      }
-
-      async function sendQuestion(prefilledQuestion) {
-        const question = (prefilledQuestion !== undefined ? prefilledQuestion : questionInput.value).trim();
-        if (!question) {
-          return;
-        }
-
-        const userMessage = { role: "user", content: question };
-        conversation.push(userMessage);
-        saveConversation();
-        renderConversation("end");
-
-        questionInput.value = "";
-        autoResizeComposer();
-        typingIndicator.classList.remove("hidden");
-        setPendingState(true);
-        scrollMessagesToBottom();
-
-        try {
-          const response = await fetch("/api/chat", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              question,
-              messages: conversation.map((message) => ({
-                role: message.role,
-                content: message.content,
-              })),
-            }),
-          });
-
-          const data = await response.json();
-          if (!response.ok) {
-            throw new Error(data.detail || "The request failed.");
-          }
-
-          conversation.push({
-            role: "assistant",
-            content: buildAssistantHistoryContent(data),
-            response: data,
-          });
-          saveConversation();
-          renderConversation("latest");
-        } catch (error) {
-          conversation.push({
-            role: "assistant",
-            content: error.message || "The request failed.",
-          });
-          saveConversation();
-          renderConversation("latest");
-        } finally {
-          typingIndicator.classList.add("hidden");
-          setPendingState(false);
-          questionInput.focus();
-        }
-      }
-
-      toggleChatbox.addEventListener("click", () => {
-        setChatboxOpen(false);
-      });
-
-      chatLauncher.addEventListener("click", () => {
-        setChatboxOpen(true);
-      });
-
-      toggleTools.addEventListener("click", () => {
-        setToolsOpen(toolsDrawer.classList.contains("hidden"));
-      });
-
-      newChatButton.addEventListener("click", () => {
-        conversation = [];
-        saveConversation();
-        renderConversation("top");
-        questionInput.value = "";
-        autoResizeComposer();
-        setToolsOpen(false);
-        questionInput.focus();
-      });
-
-      questionInput.addEventListener("input", autoResizeComposer);
-      questionInput.addEventListener("keydown", (event) => {
-        if (event.key === "Enter" && !event.shiftKey) {
-          event.preventDefault();
-          chatForm.requestSubmit();
-        }
-      });
-
-      chatForm.addEventListener("submit", async (event) => {
-        event.preventDefault();
-        await sendQuestion();
-      });
-
-      refreshButton.addEventListener("click", async () => {
-        const note = document.getElementById("refresh-note");
-        note.textContent = "Starting refresh...";
-
-        try {
-          const response = await fetch("/api/refresh", { method: "POST" });
-          const data = await response.json();
-          note.textContent = data.message;
-          await refreshStatus();
-        } catch (error) {
-          note.textContent = "Refresh failed.";
-        }
-      });
-
-      uploadButton.addEventListener("click", async () => {
-        const note = document.getElementById("upload-note");
-        if (!uploadInput.files.length) {
-          note.textContent = "Select one or more files first.";
-          return;
-        }
-
-        note.textContent = "Uploading and indexing files...";
-        const formData = new FormData();
-        for (const file of uploadInput.files) {
-          formData.append("files", file);
-        }
-
-        try {
-          const response = await fetch("/api/upload", {
-            method: "POST",
-            body: formData,
-          });
-
-          const data = await response.json();
-          if (!response.ok) {
-            note.textContent = data.detail || "Upload failed.";
-            return;
-          }
-
-          note.textContent = `Indexed ${data.ingested_files} file(s).`;
-          uploadInput.value = "";
-          await refreshStatus();
-        } catch (error) {
-          note.textContent = "Upload failed.";
-        }
-      });
-
-      renderConversation(conversation.length ? "end" : "top");
-      autoResizeComposer();
-      refreshStatus();
-    </script>
+    <script src="{{ url_for('static', path='app.js') }}"></script>
   </body>
 </html>

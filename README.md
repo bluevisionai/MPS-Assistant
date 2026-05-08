@@ -21,7 +21,8 @@ MPS Assistant is a restricted-source retrieval app for Medical Protection South 
 - Stores the content in a local SQLite knowledge base with full-text search and optional embeddings
 - Answers using a strict retrieval-only prompt and refuses when support is insufficient
 - Lets you upload additional documents that become part of the same searchable knowledge base
-- Refreshes the official site content on a schedule and on demand
+- Includes an `Apply in chat` mode for the South Africa onboarding journey, with live quote lookups and draft application submission
+- Keeps the official site content local in SQLite and refreshes it on a schedule or on demand
 
 ## Guardrails
 
@@ -73,6 +74,8 @@ python -m uvicorn mps_assistant.app:app --reload
    - practical next steps
    - limitations or what to confirm with MPS
 
+Normal question answering works from the local knowledge base. The chat UI no longer preloads the live onboarding configuration on first page load, so regular Q&A stays local-first and faster.
+
 ## Knowledge base files
 
 - SQLite DB: `data/mps_assistant.db`
@@ -107,7 +110,24 @@ Run the browser smoke test for the main chat journeys:
 python scripts/chat_ui_smoke_test.py
 ```
 
-This checks the desktop and mobile chat flows, follow-up questions, session persistence, tools drawer, collapse/reopen behavior, and new-chat reset.
+This checks the desktop and mobile chat flows, follow-up questions, session persistence, collapse/reopen behavior, and new-chat reset.
+
+## Chat Onboarding Mode
+
+The floating chat UI has two modes:
+
+- `Ask MPS` for retrieval-grounded questions against the MPS knowledge base
+- `Apply in chat` for the guided South Africa onboarding flow
+
+The onboarding flow currently supports the GP membership paths that the live portal exposes through the tested quotation journey. It can:
+
+- verify access to the live portal
+- send and verify email OTPs
+- fetch live pricing and rate-card data
+- collect the main underwriting and personal details in chat
+- submit a live draft lead to the MPS onboarding API
+
+The chat does not collect or store raw card numbers, CVVs, or full bank login details. Payment preference can be captured in chat, but final secure card or debit-order setup must still be completed directly with MPS.
 
 ## Azure App Service
 
@@ -123,9 +143,18 @@ Recommended App Service application settings:
 - `OPENAI_API_KEY`
 - `OPENAI_MODEL=gpt-5.4-mini`
 - `OPENAI_FALLBACK_MODELS=gpt-5.5,gpt-5.4,gpt-5-mini,gpt-4.1-mini`
+- `ONBOARDING_PORTAL_URL`
+- `ONBOARDING_AUTH_URL`
+- `ONBOARDING_API_BASE_URL`
+- `ONBOARDING_COUNTRY_CODE=za`
+- `ONBOARDING_PORTAL_USERNAME`
+- `ONBOARDING_PORTAL_PASSWORD`
 - `DATA_DIR=/home/site/data`
 - `ENABLE_SCHEDULER=false`
 - `AUTO_REFRESH_ON_STARTUP=false`
+- `REFRESH_TIMEZONE=Africa/Johannesburg`
+- `REFRESH_HOUR_LOCAL=0`
+- `REFRESH_MINUTE_LOCAL=0`
 - `SQLITE_JOURNAL_MODE=DELETE`
 - `WEB_CONCURRENCY=1`
 
@@ -144,5 +173,5 @@ Important App Service constraints for this codebase:
 - The crawler intentionally stays scoped to the official MPS South Africa site and linked `medicalprotection.org` resources.
 - The manual `harvest-application` command is separate from scheduled refreshes so the app does not repeatedly submit dummy form data to the production application endpoint.
 - HTML crawling is limited by `CRAWL_MAX_PAGES` in `.env`.
-- Refresh runs automatically on first startup if the knowledge base is empty, and then on the configured interval.
+- Refresh runs automatically on first startup if the knowledge base is empty, and then once a day at local midnight by default.
 # MPS-Assistant

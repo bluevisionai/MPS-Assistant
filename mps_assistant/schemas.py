@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -101,3 +101,36 @@ class StatusResponse(BaseModel):
     last_refresh_error: Optional[str]
     source_count: int
     chunk_count: int
+
+
+class OnboardingOtpRequest(BaseModel):
+    email: str
+
+
+class OnboardingOtpVerificationRequest(BaseModel):
+    email: str
+    code: str
+
+
+class OnboardingPricingRequest(BaseModel):
+    gp_category: str
+    gp_hours_band: Optional[str] = None
+    gp_intrapartum_basis: Optional[str] = None
+
+
+class OnboardingSubmissionRequest(BaseModel):
+    current_step: int = 7
+    membership_category: str
+    verified: bool = False
+    marketing: Optional[str] = None
+    checkboxes: Dict[str, bool] = Field(default_factory=dict)
+    fields: Dict[str, Any] = Field(default_factory=dict)
+    qualifications: List[Dict[str, Any]] = Field(default_factory=list)
+    underwriting_answers: Dict[str, str] = Field(default_factory=dict)
+    underwriting_rows: Dict[str, List[Any]] = Field(default_factory=dict)
+
+
+class OnboardingActionResponse(BaseModel):
+    ok: bool
+    message: str
+    payload: Dict[str, Any] = Field(default_factory=dict)

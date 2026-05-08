@@ -30,6 +30,13 @@ class Settings(BaseSettings):
     app_name: str = "MPS Assistant"
     seed_url: str = "https://www.medicalprotection.org/southafrica"
     allowed_domain: str = "medicalprotection.org"
+    onboarding_portal_url: str = "https://mps-web-d22mja-h4awazgqdeheb8ax.z02.azurefd.net/mps/za/login"
+    onboarding_auth_url: str = "https://mps-web-d22mja-h4awazgqdeheb8ax.z02.azurefd.net/api/auth/login"
+    onboarding_api_base_url: str = "https://mps-api-f9e9dhhkhycnc2he.ukwest-01.azurewebsites.net/api/v1"
+    onboarding_country_code: str = "za"
+    onboarding_portal_username: str = ""
+    onboarding_portal_password: str = ""
+    onboarding_timeout_seconds: int = 20
     data_dir: Path = Field(default_factory=_default_data_root)
     database_path: Path = Field(default_factory=lambda: _default_data_root() / "mps_assistant.db")
     raw_download_dir: Path = Field(default_factory=lambda: _default_data_root() / "raw")
@@ -39,6 +46,9 @@ class Settings(BaseSettings):
     openai_fallback_models: str = "gpt-5.5,gpt-5.4,gpt-5-mini,gpt-4.1-mini"
     embedding_model: str = "text-embedding-3-small"
     refresh_interval_hours: int = 24
+    refresh_timezone: str = "Africa/Johannesburg"
+    refresh_hour_local: int = 0
+    refresh_minute_local: int = 0
     enable_scheduler: bool = Field(default_factory=lambda: not _is_app_service())
     auto_refresh_on_startup: bool = Field(default_factory=lambda: not _is_app_service())
     sqlite_journal_mode: str = Field(default_factory=_default_sqlite_journal_mode)

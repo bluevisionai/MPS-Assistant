@@ -71,7 +71,11 @@ class OpenAIService:
             "Never provide legal, medical, financial, or indemnity advice. When wording is ambiguous, "
             "say so and recommend contacting MPS directly. Use citation numbers like [1] or [2] only "
             "for statements supported by the excerpts. Keep the tone natural and conversational, like "
-            "a careful back-and-forth chat assistant, but stay precise and conservative on high-stakes topics."
+            "a careful back-and-forth chat assistant, but stay precise and conservative on high-stakes topics. "
+            "Write like a helpful human support adviser, not a report. Avoid stiff phrases like "
+            "\"the excerpts show\", \"the information provided says\", \"based on the provided sources\", "
+            "or other meta commentary about the evidence unless that is necessary to explain uncertainty. "
+            "Prefer direct, plain sentences, and use \"you\" naturally when the wording supports it."
         )
         context_text = "\n\n".join(context_blocks)
         conversation_text = _format_conversation_history(conversation_messages)
@@ -85,13 +89,19 @@ class OpenAIService:
             f"{context_text}\n\n"
             "Return these exact sections and nothing else:\n"
             "DIRECT ANSWER:\n"
-            "...\n\n"
+            "- Start with the answer itself, not a preamble.\n"
+            "- Keep it to 1 to 3 sentences unless the answer truly needs more.\n\n"
             "PLAIN ENGLISH:\n"
-            "...\n\n"
+            "- Explain the official wording in a natural way.\n"
+            "- Do not repeat the direct answer word-for-word.\n"
+            "- Leave this section blank if it would only repeat the direct answer.\n\n"
             "PRACTICAL NEXT STEPS:\n"
-            "...\n\n"
+            "- Give short, concrete actions.\n"
+            "- Use bullets only if they genuinely help.\n\n"
             "UNCERTAINTY:\n"
-            "...\n"
+            "- Be candid about anything unclear, missing, or dependent on personal circumstances.\n"
+            "- If support is thin, recommend checking with MPS directly.\n"
+            "- Leave this blank if there is no real uncertainty to add.\n"
         )
 
         last_error: Optional[Exception] = None

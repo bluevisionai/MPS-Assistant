@@ -108,8 +108,9 @@ def run_desktop_scenarios(base_url: str, timeout: int) -> None:
         open_chat(driver, base_url, timeout)
 
         assert driver.find_element(By.ID, "ask-button").text == "Send"
-        assert len(driver.find_elements(By.CSS_SELECTOR, ".starter-chip")) == 3
+        assert len(driver.find_elements(By.CSS_SELECTOR, ".starter-chip")) == 5
         assert len(driver.find_elements(By.CSS_SELECTOR, ".message-row-assistant")) == 1
+        assert driver.find_element(By.ID, "mode-caption").text == "Answers based only on official MPS South Africa sources."
 
         ask_question(driver, "What should I do if I receive a complaint?", timeout)
         wait_for_message_count(driver, 3, timeout)
@@ -120,22 +121,26 @@ def run_desktop_scenarios(base_url: str, timeout: int) -> None:
         wait_for_message_count(driver, 5, timeout)
         assert len(driver.find_elements(By.CSS_SELECTOR, ".message-row-user")) == 2
 
-        driver.find_element(By.ID, "toggle-tools").click()
-        WebDriverWait(driver, timeout).until(lambda d: d.find_element(By.ID, "tools-drawer").is_displayed())
-        driver.find_element(By.ID, "toggle-tools").click()
-        WebDriverWait(driver, timeout).until(lambda d: "hidden" in d.find_element(By.ID, "tools-drawer").get_attribute("class"))
-
         driver.find_element(By.ID, "toggle-chatbox").click()
         WebDriverWait(driver, timeout).until(lambda d: d.find_element(By.ID, "chat-launcher").is_displayed())
         driver.find_element(By.ID, "chat-launcher").click()
         WebDriverWait(driver, timeout).until(lambda d: d.find_element(By.ID, "chatbox-shell").get_attribute("class").find("is-open") >= 0)
+
+        driver.find_element(By.ID, "mode-apply").click()
+        WebDriverWait(driver, timeout).until(lambda d: d.find_element(By.ID, "new-chat").text == "Start again")
+        WebDriverWait(driver, timeout).until(
+            lambda d: "Complete the live membership draft in this chat." == d.find_element(By.ID, "mode-caption").text
+        )
+        WebDriverWait(driver, timeout).until(lambda d: len(d.find_elements(By.CSS_SELECTOR, ".journey-shell")) == 1)
+        driver.find_element(By.ID, "mode-knowledge").click()
+        WebDriverWait(driver, timeout).until(lambda d: d.find_element(By.ID, "new-chat").text == "New chat")
 
         driver.refresh()
         WebDriverWait(driver, timeout).until(lambda d: len(d.find_elements(By.CSS_SELECTOR, ".message-row-user")) == 2)
 
         driver.find_element(By.ID, "new-chat").click()
         WebDriverWait(driver, timeout).until(lambda d: len(d.find_elements(By.CSS_SELECTOR, ".message-row-assistant")) == 1)
-        assert len(driver.find_elements(By.CSS_SELECTOR, ".starter-chip")) == 3
+        assert len(driver.find_elements(By.CSS_SELECTOR, ".starter-chip")) == 5
 
 
 def run_mobile_scenarios(base_url: str, timeout: int) -> None:
@@ -145,7 +150,7 @@ def run_mobile_scenarios(base_url: str, timeout: int) -> None:
         open_chat(driver, base_url, timeout)
 
         assert driver.find_element(By.ID, "ask-button").text == "Send"
-        ask_question(driver, "What file types can be uploaded in the application?", timeout)
+        ask_question(driver, "What file types can I upload in the application?", timeout)
         wait_for_message_count(driver, 3, timeout)
         wait_for_assistant_sources(driver, timeout)
         assert driver.find_element(By.ID, "ask-button").text == "Send"
@@ -176,7 +181,7 @@ def ask_question(driver: webdriver.Chrome, question: str, timeout: int) -> None:
     question_input.clear()
     question_input.send_keys(question)
     question_input.send_keys(Keys.ENTER)
-    WebDriverWait(driver, timeout).until(lambda d: d.find_element(By.ID, "ask-button").text in {"Checking...", "Send"})
+    WebDriverWait(driver, timeout).until(lambda d: d.find_element(By.ID, "ask-button").text in {"Processing...", "Send"})
     WebDriverWait(driver, timeout).until(lambda d: d.find_element(By.ID, "ask-button").text == "Send")
 
 
