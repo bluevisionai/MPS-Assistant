@@ -10,8 +10,6 @@ function generateUUID() {
     return v.toString(16)
   })
 }
-const APPLICATION_INTRO =
-  "I can guide the live MPS South Africa membership draft in this chat, using the same journey order as the portal."
 const STARTER_QUESTIONS = [
   "What steps are in the membership application?",
   "What personal details does the application ask for?",
@@ -179,7 +177,9 @@ function normalizeUiState(value) {
   const state = value && typeof value === "object" ? value : {}
   const activeMode = "unified"
   const knowledgeConversation = normalizeConversation(state.knowledgeConversation)
-  const applicationConversation = normalizeConversation(state.applicationConversation)
+  const applicationConversation = normalizeConversation(state.applicationConversation).filter(
+    (message) => !isLegacyApplicationIntroMessage(message)
+  )
   const application = normalizeApplicationState(state.application)
 
   return {
@@ -191,6 +191,17 @@ function normalizeUiState(value) {
       dashboardOpen: Boolean(state.dashboardOpen),
     sessionId: state.sessionId || generateUUID(),
   }
+}
+
+function isLegacyApplicationIntroMessage(message) {
+  if (!message || message.role !== "assistant") {
+    return false
+  }
+  const content = String(message.content || "")
+  return (
+    content.includes("I can guide the live MPS South Africa membership draft in this chat") &&
+    content.includes("Start with the role that best matches the application you want to complete")
+  )
 }
 
 function normalizeConversation(items) {
@@ -1130,14 +1141,7 @@ async function submitFeedback(message, helpful) {
 }
 
 function seedApplicationConversation() {
-  if (uiState.applicationConversation.length) {
-    return
-  }
-  uiState.applicationConversation.push({
-    role: "assistant",
-    content: `${APPLICATION_INTRO}\n\nStart with the role that best matches the application you want to complete.`,
-  })
-  saveUiState()
+  // Intro text is intentionally not persisted in the timeline.
 }
 
 async function ensureOnboardingConfig() {
