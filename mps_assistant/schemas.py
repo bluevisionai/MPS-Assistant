@@ -63,6 +63,7 @@ class ConversationMessage(BaseModel):
 class ChatRequest(BaseModel):
     question: str
     messages: List[ConversationMessage] = Field(default_factory=list)
+    session_id: Optional[str] = Field(default=None, description="Session ID for tracking conversation context")
 
 
 class SourceCitation(BaseModel):
@@ -75,6 +76,21 @@ class SourceCitation(BaseModel):
     page_number: Optional[int]
 
 
+class RelatedResource(BaseModel):
+    kind: Literal["pdf", "form", "chart", "link"]
+    title: str
+    url: str
+    description: Optional[str] = None
+
+
+class MembershipRecommendation(BaseModel):
+    category: str
+    title: str
+    reason: str
+    fit_score: float = 0.0
+    next_question: Optional[str] = None
+
+
 class ChatResponse(BaseModel):
     direct_answer: str
     sources: List[SourceCitation]
@@ -82,6 +98,84 @@ class ChatResponse(BaseModel):
     practical_next_steps: str
     limitations: str
     refused: bool
+    follow_up_suggestions: List[str] = Field(default_factory=list)
+    confidence_score: float = 0.0
+    confidence_level: Literal["high", "medium", "low", "very_low"] = "low"
+    should_escalate: bool = False
+    escalation_message: Optional[str] = None
+    related_resources: List[RelatedResource] = Field(default_factory=list)
+    membership_recommendation: Optional[MembershipRecommendation] = None
+
+
+class FeedbackRequest(BaseModel):
+    session_id: Optional[str] = None
+    answer_id: str
+    question: str
+    answer: str
+    helpful: bool
+    comment: Optional[str] = None
+
+
+class FeedbackResponse(BaseModel):
+    ok: bool
+    message: str
+
+
+class HandoffRequest(BaseModel):
+    session_id: str
+    answer_id: Optional[str] = None
+    reason: Optional[str] = None
+    question: Optional[str] = None
+    answer: Optional[str] = None
+    confidence_score: Optional[float] = None
+    confidence_level: Optional[str] = None
+    conversation: List[Dict[str, Any]] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class HandoffResponse(BaseModel):
+    ok: bool
+    ticket_id: str
+    message: str
+
+
+class AnalyticsKpiItem(BaseModel):
+    label: str
+    value: str
+    delta: Optional[str] = None
+    tone: Literal["neutral", "good", "warn"] = "neutral"
+
+
+class AnalyticsTrendItem(BaseModel):
+    label: str
+    value: int
+
+
+class AnalyticsResponse(BaseModel):
+    generated_at: str
+    refresh_in_progress: bool
+    last_refresh_completed_at: Optional[str] = None
+    kpis: List[AnalyticsKpiItem] = Field(default_factory=list)
+    recent_activity: List[AnalyticsTrendItem] = Field(default_factory=list)
+    top_gap_topics: List[GapSummaryItem] = Field(default_factory=list)
+
+
+class GapSummaryItem(BaseModel):
+    topic: str
+    count: int
+    last_seen_at: str
+
+
+class GapSummaryResponse(BaseModel):
+    total_gap_events: int
+    unresolved_gap_events: int
+    top_topics: List[GapSummaryItem] = Field(default_factory=list)
+
+
+class ConversationResumeResponse(BaseModel):
+    session_id: str
+    turn_count: int
+    messages: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class UploadResponse(BaseModel):

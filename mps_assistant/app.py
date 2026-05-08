@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List
 
@@ -13,8 +14,17 @@ from fastapi.templating import Jinja2Templates
 from .config import get_settings
 from .database import Database
 from .schemas import (
+    AnalyticsKpiItem,
+    AnalyticsResponse,
+    AnalyticsTrendItem,
     ChatRequest,
     ChatResponse,
+    ConversationResumeResponse,
+    FeedbackRequest,
+    FeedbackResponse,
+    GapSummaryResponse,
+    HandoffRequest,
+    HandoffResponse,
     OnboardingActionResponse,
     OnboardingOtpRequest,
     OnboardingOtpVerificationRequest,
@@ -85,16 +95,146 @@ async def healthz() -> dict:
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest) -> ChatResponse:
     try:
-        return knowledge_base.answer_question(request.question, request.messages)
+        response = knowledge_base.answer_question(request.question, request.messages, request.session_id)
+
+        if request.session_id:
+            conversation_id = database.create_or_get_conversation(request.session_id)
+            turn_number = database.get_conversation_turn_count(conversation_id) + 1
+            database.save_conversation_turn(
+                conversation_id=conversation_id,
+                turn_number=turn_number,
+                user_message=request.question,
+                assistant_response=response.direct_answer,
+                response_json=response.model_dump_json(),
+            )
+
+        return response
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     except RuntimeError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
 
 
+@app.get("/api/conversations/{session_id}", response_model=ConversationResumeResponse)
+async def get_conversation(session_id: str, limit: int = 60) -> ConversationResumeResponse:
+    conversation_id = database.create_or_get_conversation(session_id)
+    turns = database.get_conversation_history(conversation_id, limit=max(1, min(limit, 200)))
+
+    messages = []
+    for turn in turns:
+        user_message = str(turn.get("user_message") or "").strip()
+        assistant_response = str(turn.get("assistant_response") or "").strip()
+        response_json = turn.get("response_json")
+
+        if user_message:
+            messages.append({"role": "user", "content": user_message})
+
+        parsed_response = None
+        if isinstance(response_json, str) and response_json.strip():
+            try:
+                import json
+
+                parsed_response = json.loads(response_json)
+            except Exception:
+                parsed_response = None
+
+        assistant_payload = {
+            "role": "assistant",
+            "content": assistant_response,
+        }
+        if parsed_response is not None:
+            assistant_payload["response"] = parsed_response
+        messages.append(assistant_payload)
+
+    return ConversationResumeResponse(
+        session_id=session_id,
+        turn_count=len(turns),
+        messages=messages,
+    )
+
+
+@app.post("/api/feedback", response_model=FeedbackResponse)
+async def feedback(request: FeedbackRequest) -> FeedbackResponse:
+    if not request.answer_id.strip():
+        raise HTTPException(status_code=400, detail="answer_id is required")
+
+    database.upsert_answer_feedback(
+        answer_id=request.answer_id,
+        session_id=request.session_id,
+        question=request.question,
+        answer=request.answer,
+        helpful=request.helpful,
+        comment=request.comment,
+    )
+    return FeedbackResponse(ok=True, message="Feedback recorded")
+
+
+@app.post("/api/handoff", response_model=HandoffResponse)
+async def handoff(request: HandoffRequest) -> HandoffResponse:
+    session_id = request.session_id.strip()
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id is required")
+
+    conversation = list(request.conversation or [])
+    if not conversation:
+        conversation_id = database.create_or_get_conversation(session_id)
+        turns = database.get_conversation_history(conversation_id, limit=80)
+        for turn in turns:
+            user_message = str(turn.get("user_message") or "").strip()
+            assistant_response = str(turn.get("assistant_response") or "").strip()
+            if user_message:
+                conversation.append({"role": "user", "content": user_message})
+            if assistant_response:
+                conversation.append({"role": "assistant", "content": assistant_response})
+
+    ticket_id = database.create_handoff_request(
+        session_id=session_id,
+        answer_id=request.answer_id,
+        reason=request.reason,
+        question=request.question,
+        answer=request.answer,
+        confidence_score=request.confidence_score,
+        confidence_level=request.confidence_level,
+        conversation=conversation,
+        metadata=request.metadata,
+    )
+    return HandoffResponse(
+        ok=True,
+        ticket_id=ticket_id,
+        message="Handoff request captured with full session context.",
+    )
+
+
 @app.get("/api/status", response_model=StatusResponse)
 async def status() -> StatusResponse:
     return StatusResponse(**knowledge_base.status())
+
+
+@app.get("/api/analytics", response_model=AnalyticsResponse)
+async def analytics() -> AnalyticsResponse:
+    status_payload = knowledge_base.status()
+    summary = database.analytics_summary()
+
+    return AnalyticsResponse(
+        generated_at=datetime.now(timezone.utc).isoformat(),
+        refresh_in_progress=bool(status_payload["refresh_in_progress"]),
+        last_refresh_completed_at=status_payload.get("last_refresh_completed_at"),
+        kpis=[
+            AnalyticsKpiItem(label="Knowledge Base", value=f"{summary['source_count']} sources", delta=f"{summary['chunk_count']} chunks"),
+            AnalyticsKpiItem(label="Conversations", value=str(summary["conversation_count"]), delta=f"{summary['message_count']} total turns"),
+            AnalyticsKpiItem(label="Helpful feedback", value=f"{summary['helpful_rate']}%", delta=f"{summary['feedback_total']} votes", tone="good" if summary["helpful_rate"] >= 70 else "warn" if summary["feedback_total"] else "neutral"),
+            AnalyticsKpiItem(label="Human handoffs", value=str(summary["handoff_total"]), delta=f"{summary['handoff_queued']} queued", tone="warn" if summary["handoff_queued"] else "neutral"),
+            AnalyticsKpiItem(label="Gap events", value=str(summary["total_gap_events"]), delta=f"{summary['unresolved_gap_events']} unresolved", tone="warn" if summary["unresolved_gap_events"] else "neutral"),
+        ],
+        recent_activity=[AnalyticsTrendItem(**item) for item in summary["recent_activity"]],
+        top_gap_topics=summary["top_gap_topics"],
+    )
+
+
+@app.get("/api/gaps", response_model=GapSummaryResponse)
+async def gaps(top: int = 10) -> GapSummaryResponse:
+    summary = database.kb_gap_summary(top_n=top)
+    return GapSummaryResponse(**summary)
 
 
 @app.get("/api/onboarding/config")

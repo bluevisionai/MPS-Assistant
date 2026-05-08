@@ -42,16 +42,13 @@
 
           <div class="chatbox-body">
             <div class="chatbox-toolbar">
-              <div class="mode-switch" role="tablist" aria-label="Assistant mode">
-                <button class="mode-pill is-active" id="mode-knowledge" type="button" aria-selected="true">
-                  Ask MPS
-                </button>
-                <button class="mode-pill" id="mode-apply" type="button" aria-selected="false">
-                  Apply in chat
-                </button>
-              </div>
-              <p class="mode-caption" id="mode-caption">Grounded answers from official MPS sources.</p>
+              <p class="mode-caption" id="mode-caption">Ask questions or progress through your membership application</p>
+              <button class="secondary-button analytics-toggle" id="toggle-analytics" type="button" aria-expanded="false">
+                Live analytics
+              </button>
             </div>
+
+            <section class="analytics-dashboard hidden" id="analytics-dashboard" aria-live="polite"></section>
 
             <div class="messages-stage" id="messages-stage">
               <div class="messages-list" id="chat-messages" aria-live="polite"></div>
@@ -70,7 +67,7 @@
                   id="question-input"
                   name="question"
                   rows="1"
-                  placeholder="Ask about membership, applications, complaints, or anything MPS related ..."
+                  placeholder="Ask a question about MPS or continue your membership application ..."
                 ></textarea>
                 <button class="primary-button send-button" id="ask-button" type="submit">Send</button>
               </div>

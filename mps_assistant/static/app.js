@@ -2,6 +2,14 @@ const STORAGE_KEY = "mps-assistant-ui-v1"
 const LEGACY_KNOWLEDGE_KEY = "mps-assistant-chat-v2"
 const MAX_STORED_MESSAGES = 24
 const KNOWLEDGE_WELCOME = "Ask about MPS South Africa. Answers come only from official MPS material."
+// UUID generator for session tracking
+function generateUUID() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0
+    const v = c === 'x' ? r : (r & 0x3 | 0x8)
+    return v.toString(16)
+  })
+}
 const APPLICATION_INTRO =
   "I can guide the live MPS South Africa membership draft in this chat, using the same journey order as the portal."
 const STARTER_QUESTIONS = [
@@ -32,14 +40,17 @@ const chatForm = document.getElementById("chat-form")
 const askButton = document.getElementById("ask-button")
 const questionInput = document.getElementById("question-input")
 const toggleChatbox = document.getElementById("toggle-chatbox")
+const toggleAnalytics = document.getElementById("toggle-analytics")
 const newChatButton = document.getElementById("new-chat")
 const chatboxShell = document.getElementById("chatbox-shell")
 const chatLauncher = document.getElementById("chat-launcher")
+const analyticsDashboard = document.getElementById("analytics-dashboard")
 const messagesStage = document.getElementById("messages-stage")
 const messagesList = document.getElementById("chat-messages")
 const typingIndicator = document.getElementById("typing-indicator")
-const modeKnowledge = document.getElementById("mode-knowledge")
-const modeApply = document.getElementById("mode-apply")
+// Unified mode - mode buttons removed from UI
+const modeKnowledge = null
+const modeApply = null
 const modeCaption = document.getElementById("mode-caption")
 const composerNote = document.getElementById("composer-note")
 const typingText = typingIndicator.querySelector("p")
@@ -48,6 +59,12 @@ let knowledgePending = false
 let applicationPending = false
 let onboardingConfig = null
 let onboardingConfigPromise = null
+let analyticsState = {
+  loading: false,
+  data: null,
+  error: "",
+  lastLoadedAt: 0,
+}
 
 let uiState = loadUiState()
 
@@ -115,7 +132,7 @@ function defaultApplicationState() {
 
 function loadUiState() {
   try {
-    const raw = sessionStorage.getItem(STORAGE_KEY)
+    const raw = localStorage.getItem(STORAGE_KEY)
     if (raw) {
       const parsed = JSON.parse(raw)
       return normalizeUiState(parsed)
@@ -125,7 +142,7 @@ function loadUiState() {
   }
 
   try {
-    const legacy = sessionStorage.getItem(LEGACY_KNOWLEDGE_KEY)
+    const legacy = localStorage.getItem(LEGACY_KNOWLEDGE_KEY) || sessionStorage.getItem(LEGACY_KNOWLEDGE_KEY)
     if (legacy) {
       const parsed = JSON.parse(legacy)
       return normalizeUiState({
@@ -142,14 +159,16 @@ function loadUiState() {
 
 function normalizeUiState(value) {
   const defaultState = {
-    activeMode: "knowledge",
+    activeMode: "unified",
     knowledgeConversation: [],
     applicationConversation: [],
     application: defaultApplicationState(),
+    dashboardOpen: false,
+    sessionId: generateUUID(),
   }
 
   const state = value && typeof value === "object" ? value : {}
-  const activeMode = state.activeMode === "apply" ? "apply" : "knowledge"
+  const activeMode = "unified"
   const knowledgeConversation = normalizeConversation(state.knowledgeConversation)
   const applicationConversation = normalizeConversation(state.applicationConversation)
   const application = normalizeApplicationState(state.application)
@@ -160,6 +179,8 @@ function normalizeUiState(value) {
     knowledgeConversation,
     applicationConversation,
     application,
+      dashboardOpen: Boolean(state.dashboardOpen),
+    sessionId: state.sessionId || generateUUID(),
   }
 }
 
@@ -211,7 +232,43 @@ function normalizeApplicationState(value) {
 function saveUiState() {
   uiState.knowledgeConversation = uiState.knowledgeConversation.slice(-MAX_STORED_MESSAGES)
   uiState.applicationConversation = uiState.applicationConversation.slice(-MAX_STORED_MESSAGES)
-  sessionStorage.setItem(STORAGE_KEY, JSON.stringify(uiState))
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(uiState))
+}
+
+function normalizeRestoredMessage(message) {
+  if (!message || (message.role !== "user" && message.role !== "assistant")) {
+    return null
+  }
+  const normalized = {
+    role: message.role,
+    content: typeof message.content === "string" ? message.content : "",
+  }
+  if (message.role === "assistant" && message.response && typeof message.response === "object") {
+    normalized.response = message.response
+    normalized.answerId = message.answerId || generateUUID()
+    normalized.feedback = message.feedback || { status: "idle", helpful: null }
+    normalized.handoff = message.handoff || { status: "idle", ticketId: null }
+    normalized.question = message.question || ""
+  }
+  return normalized
+}
+
+async function restoreConversationFromServer() {
+  if (!uiState.sessionId || uiState.knowledgeConversation.length > 0) {
+    return
+  }
+  try {
+    const data = await fetchJson(`/api/conversations/${encodeURIComponent(uiState.sessionId)}?limit=60`)
+    const restored = Array.isArray(data.messages)
+      ? data.messages.map(normalizeRestoredMessage).filter(Boolean)
+      : []
+    if (restored.length > 0) {
+      uiState.knowledgeConversation = restored.slice(-MAX_STORED_MESSAGES)
+      saveUiState()
+    }
+  } catch (error) {
+    // Keep local-only session if restore fails.
+  }
 }
 
 function createElement(tag, className, text) {
@@ -229,6 +286,130 @@ function setText(id, text) {
   const node = document.getElementById(id)
   if (node) {
     node.textContent = text || ""
+  }
+}
+
+function formatRelativeTime(value) {
+  if (!value) {
+    return "No refresh recorded"
+  }
+  const timestamp = new Date(value)
+  if (Number.isNaN(timestamp.getTime())) {
+    return value
+  }
+  const minutes = Math.max(0, Math.round((Date.now() - timestamp.getTime()) / 60000))
+  if (minutes < 1) {
+    return "Updated just now"
+  }
+  if (minutes < 60) {
+    return `Updated ${minutes} min ago`
+  }
+  const hours = Math.round(minutes / 60)
+  return `Updated ${hours}h ago`
+}
+
+function renderAnalyticsDashboard() {
+  if (!analyticsDashboard || !toggleAnalytics) {
+    return
+  }
+
+  analyticsDashboard.innerHTML = ""
+  analyticsDashboard.classList.toggle("hidden", !uiState.dashboardOpen)
+  toggleAnalytics.setAttribute("aria-expanded", String(uiState.dashboardOpen))
+  toggleAnalytics.textContent = uiState.dashboardOpen ? "Hide analytics" : "Live analytics"
+
+  if (!uiState.dashboardOpen) {
+    return
+  }
+
+  const header = createElement("div", "analytics-header")
+  header.appendChild(createElement("p", "analytics-title", "Real-time analytics dashboard"))
+  const stamp = analyticsState.data?.last_refresh_completed_at
+    ? formatRelativeTime(analyticsState.data.last_refresh_completed_at)
+    : analyticsState.loading
+      ? "Loading dashboard..."
+      : analyticsState.error || "Waiting for analytics"
+  header.appendChild(createElement("p", "analytics-subtitle", stamp))
+  analyticsDashboard.appendChild(header)
+
+  if (analyticsState.loading && !analyticsState.data) {
+    analyticsDashboard.appendChild(createElement("p", "analytics-empty", "Loading current KPIs and activity..."))
+    return
+  }
+
+  if (analyticsState.error && !analyticsState.data) {
+    analyticsDashboard.appendChild(createElement("p", "analytics-empty analytics-empty-error", analyticsState.error))
+    return
+  }
+
+  const data = analyticsState.data
+  if (!data) {
+    analyticsDashboard.appendChild(createElement("p", "analytics-empty", "No analytics available yet."))
+    return
+  }
+
+  const kpiGrid = createElement("div", "analytics-kpi-grid")
+  for (const item of data.kpis || []) {
+    const card = createElement("article", `analytics-kpi analytics-kpi-${item.tone || "neutral"}`)
+    card.appendChild(createElement("p", "analytics-kpi-label", item.label || "Metric"))
+    card.appendChild(createElement("p", "analytics-kpi-value", item.value || "0"))
+    card.appendChild(createElement("p", "analytics-kpi-delta", item.delta || ""))
+    kpiGrid.appendChild(card)
+  }
+  analyticsDashboard.appendChild(kpiGrid)
+
+  const detailGrid = createElement("div", "analytics-detail-grid")
+
+  const activityCard = createElement("section", "analytics-card")
+  activityCard.appendChild(createElement("p", "analytics-card-title", "Last 24 hours"))
+  const activityList = createElement("div", "analytics-activity-list")
+  for (const item of data.recent_activity || []) {
+    const row = createElement("div", "analytics-activity-row")
+    row.appendChild(createElement("span", "analytics-activity-label", item.label || "Activity"))
+    row.appendChild(createElement("strong", "analytics-activity-value", String(item.value || 0)))
+    activityList.appendChild(row)
+  }
+  activityCard.appendChild(activityList)
+  detailGrid.appendChild(activityCard)
+
+  const gapsCard = createElement("section", "analytics-card")
+  gapsCard.appendChild(createElement("p", "analytics-card-title", "Top gap topics"))
+  const gaps = Array.isArray(data.top_gap_topics) ? data.top_gap_topics : []
+  if (!gaps.length) {
+    gapsCard.appendChild(createElement("p", "analytics-empty", "No unresolved gap topics recorded."))
+  } else {
+    const gapList = createElement("div", "analytics-gap-list")
+    for (const topic of gaps) {
+      const row = createElement("div", "analytics-gap-row")
+      row.appendChild(createElement("span", "analytics-gap-topic", topic.topic || "Unknown"))
+      row.appendChild(createElement("strong", "analytics-gap-count", String(topic.count || 0)))
+      gapList.appendChild(row)
+    }
+    gapsCard.appendChild(gapList)
+  }
+  detailGrid.appendChild(gapsCard)
+
+  analyticsDashboard.appendChild(detailGrid)
+}
+
+async function loadAnalytics(force = false) {
+  const isFresh = Date.now() - analyticsState.lastLoadedAt < 12000
+  if (!force && (analyticsState.loading || isFresh)) {
+    return
+  }
+
+  analyticsState.loading = true
+  analyticsState.error = ""
+  renderAnalyticsDashboard()
+
+  try {
+    analyticsState.data = await fetchJson("/api/analytics")
+    analyticsState.lastLoadedAt = Date.now()
+  } catch (error) {
+    analyticsState.error = error.message || "Could not load analytics dashboard."
+  } finally {
+    analyticsState.loading = false
+    renderAnalyticsDashboard()
   }
 }
 
@@ -356,15 +537,96 @@ function renderSourceCards(sources) {
   return wrapper
 }
 
-function renderAssistantResponse(response) {
+function resourceIcon(kind) {
+  if (kind === "pdf") return "PDF"
+  if (kind === "form") return "FORM"
+  if (kind === "chart") return "CHART"
+  return "LINK"
+}
+
+function renderResourceCards(resources) {
+  const wrapper = createElement("div", "resource-stack")
+  for (const resource of resources) {
+    const card = createElement("a", "resource-card")
+    card.href = resource.url
+    card.target = resource.url.startsWith("/") ? "_self" : "_blank"
+    card.rel = "noreferrer"
+
+    const top = createElement("div", "resource-topline")
+    top.appendChild(createElement("span", "resource-kind", resourceIcon(resource.kind || "link")))
+    top.appendChild(createElement("span", "resource-title", resource.title || "Related resource"))
+    card.appendChild(top)
+
+    if (resource.description) {
+      card.appendChild(createElement("p", "resource-description", resource.description))
+    }
+    card.appendChild(createElement("p", "resource-url", resource.url))
+
+    wrapper.appendChild(card)
+  }
+  return wrapper
+}
+
+function renderAssistantResponse(response, message) {
   const bubble = createElement(
     "div",
     `message-bubble assistant-bubble ${response.refused ? "assistant-bubble-refused" : ""}`
   )
 
+  const confidenceMeta = createElement("div", "message-confidence")
+  const confidenceLabel = (response.confidence_level || "low").replace("_", " ")
+  const scoreValue = Number.isFinite(response.confidence_score)
+    ? Math.round(response.confidence_score * 100)
+    : 0
+  confidenceMeta.appendChild(
+    createElement(
+      "span",
+      `confidence-pill confidence-${response.confidence_level || "low"}`,
+      `Confidence: ${confidenceLabel} (${scoreValue}%)`
+    )
+  )
+  bubble.appendChild(confidenceMeta)
+
   const directBlock = createElement("div", "message-block message-block-primary")
   appendTextBlocks(directBlock, response.direct_answer)
   bubble.appendChild(directBlock)
+
+  if (response.should_escalate && response.escalation_message) {
+    const escalation = createElement("section", "message-section message-escalation")
+    escalation.appendChild(createElement("p", "message-section-title", "Escalation recommended"))
+    appendTextBlocks(escalation, response.escalation_message)
+
+    const actions = createElement("div", "escalation-actions")
+    const contactBtn = createElement("button", "followup-chip", "How can I contact MPS support directly?")
+    contactBtn.type = "button"
+    contactBtn.disabled = knowledgePending
+    contactBtn.addEventListener("click", async () => {
+      await sendQuestion("How can I contact MPS support directly?")
+    })
+    actions.appendChild(contactBtn)
+
+    if (message) {
+      const handoffBtn = createElement("button", "followup-chip", "Request human handoff")
+      handoffBtn.type = "button"
+      const handoff = message.handoff || { status: "idle", ticketId: null }
+      handoffBtn.disabled = knowledgePending || handoff.status === "sending" || handoff.status === "sent"
+      handoffBtn.addEventListener("click", async () => {
+        await requestHumanHandoff(message, response)
+      })
+      actions.appendChild(handoffBtn)
+    }
+
+    escalation.appendChild(actions)
+
+    if (message && message.handoff && message.handoff.status === "sent") {
+      const ticket = message.handoff.ticketId ? ` Ticket: ${message.handoff.ticketId}.` : ""
+      escalation.appendChild(createElement("p", "handoff-status", `Human handoff requested successfully.${ticket}`))
+    } else if (message && message.handoff && message.handoff.status === "error") {
+      escalation.appendChild(createElement("p", "handoff-status handoff-status-error", "Could not submit handoff request. Please try again."))
+    }
+
+    bubble.appendChild(escalation)
+  }
 
   if (response.plain_english) {
     const section = createElement("section", "message-section")
@@ -393,11 +655,68 @@ function renderAssistantResponse(response) {
     bubble.appendChild(section)
   }
 
+  if (response.related_resources && response.related_resources.length) {
+    const section = createElement("section", "message-section")
+    section.appendChild(createElement("p", "message-section-title", "Related resources"))
+    section.appendChild(renderResourceCards(response.related_resources))
+    bubble.appendChild(section)
+  }
+
   if (response.sources && response.sources.length) {
     const details = createElement("details", "message-sources")
     details.appendChild(createElement("summary", "", `Sources (${response.sources.length})`))
     details.appendChild(renderSourceCards(response.sources))
     bubble.appendChild(details)
+  }
+
+  if (response.follow_up_suggestions && response.follow_up_suggestions.length) {
+    const section = createElement("section", "message-section message-followups")
+    section.appendChild(createElement("p", "message-section-title", "Try next"))
+    const chips = createElement("div", "followup-chips")
+
+    for (const suggestion of response.follow_up_suggestions.slice(0, 3)) {
+      const chip = createElement("button", "followup-chip", suggestion)
+      chip.type = "button"
+      chip.disabled = knowledgePending
+      chip.addEventListener("click", async () => {
+        await sendQuestion(suggestion)
+      })
+      chips.appendChild(chip)
+    }
+
+    section.appendChild(chips)
+    bubble.appendChild(section)
+  }
+
+  if (message && message.answerId) {
+    const feedback = message.feedback || { status: "idle", helpful: null }
+    const row = createElement("div", "message-feedback")
+    row.appendChild(createElement("span", "message-feedback-label", "Was this helpful?"))
+
+    const up = createElement("button", `feedback-btn ${feedback.helpful === true ? "is-selected" : ""}`, "👍")
+    up.type = "button"
+    up.disabled = feedback.status === "sending"
+    up.addEventListener("click", async () => {
+      await submitFeedback(message, true)
+    })
+
+    const down = createElement("button", `feedback-btn ${feedback.helpful === false ? "is-selected" : ""}`, "👎")
+    down.type = "button"
+    down.disabled = feedback.status === "sending"
+    down.addEventListener("click", async () => {
+      await submitFeedback(message, false)
+    })
+
+    row.appendChild(up)
+    row.appendChild(down)
+
+    if (feedback.status === "saved") {
+      row.appendChild(createElement("span", "feedback-status", "Thanks for the feedback."))
+    } else if (feedback.status === "error") {
+      row.appendChild(createElement("span", "feedback-status feedback-status-error", "Could not save feedback."))
+    }
+
+    bubble.appendChild(row)
   }
 
   return bubble
@@ -416,7 +735,7 @@ function renderTextMessage(message, assistantLabel) {
   }
 
   if (message.role === "assistant" && message.response) {
-    content.appendChild(renderAssistantResponse(message.response))
+    content.appendChild(renderAssistantResponse(message.response, message))
   } else {
     const bubble = createElement("div", `message-bubble ${message.role === "user" ? "user-bubble" : "assistant-bubble"}`)
     if (message.role === "assistant") {
@@ -457,7 +776,22 @@ function createStarterChips() {
   applyButton.type = "button"
   applyButton.disabled = knowledgePending
   applyButton.addEventListener("click", async () => {
-    await switchMode("apply")
+    // In unified mode, seed the application conversation and show the first step
+    if (!onboardingConfig) {
+      showTyping("loading ...")
+      try {
+        await ensureOnboardingConfig()
+      } finally {
+        hideTyping()
+      }
+    }
+    if (uiState.applicationConversation.length === 0) {
+      seedApplicationConversation()
+    }
+    uiState.application.currentStep = 0
+    saveUiState()
+    renderApp("end")
+    renderApplicationCardMessage()
   })
   wrapper.appendChild(applyButton)
 
@@ -487,8 +821,6 @@ function setKnowledgePendingState(pending) {
   askButton.textContent = pending ? "Processing..." : "Send"
   questionInput.disabled = pending
   newChatButton.disabled = pending || applicationPending
-  modeKnowledge.disabled = pending || applicationPending
-  modeApply.disabled = pending || applicationPending
   document.querySelectorAll(".starter-chip").forEach((button) => {
     button.disabled = pending
   })
@@ -497,8 +829,6 @@ function setKnowledgePendingState(pending) {
 function setApplicationPendingState(pending) {
   applicationPending = pending
   newChatButton.disabled = pending || knowledgePending
-  modeKnowledge.disabled = pending
-  modeApply.disabled = pending
 }
 
 async function fetchJson(url, options = {}) {
@@ -540,13 +870,24 @@ async function sendQuestion(prefilledQuestion) {
           role: message.role,
           content: message.content,
         })),
+        session_id: uiState.sessionId,
       }),
     })
 
     uiState.knowledgeConversation.push({
+      answerId: generateUUID(),
       role: "assistant",
       content: buildAssistantHistoryContent(data),
       response: data,
+      question,
+      handoff: {
+        status: "idle",
+        ticketId: null,
+      },
+      feedback: {
+        status: "idle",
+        helpful: null,
+      },
     })
     saveUiState()
     renderApp("latest")
@@ -560,10 +901,112 @@ async function sendQuestion(prefilledQuestion) {
   } finally {
     hideTyping()
     setKnowledgePendingState(false)
-    if (uiState.activeMode === "knowledge") {
-      questionInput.focus()
+    questionInput.focus()
+  }
+}
+
+function buildHandoffConversationPayload() {
+  return uiState.knowledgeConversation.slice(-MAX_STORED_MESSAGES).map((item) => {
+    const payload = {
+      role: item.role,
+      content: item.content,
+    }
+    if (item.role === "assistant" && item.response && typeof item.response === "object") {
+      payload.response = item.response
+    }
+    return payload
+  })
+}
+
+async function requestHumanHandoff(message, response) {
+  if (!message || !response) {
+    return
+  }
+
+  message.handoff = {
+    ...(message.handoff || {}),
+    status: "sending",
+  }
+  saveUiState()
+  renderApp("latest")
+
+  try {
+    const data = await fetchJson("/api/handoff", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        session_id: uiState.sessionId,
+        answer_id: message.answerId || null,
+        reason: "User requested human handoff from escalation section.",
+        question: message.question || "",
+        answer: response.direct_answer || message.content || "",
+        confidence_score: Number.isFinite(response.confidence_score) ? response.confidence_score : null,
+        confidence_level: response.confidence_level || null,
+        conversation: buildHandoffConversationPayload(),
+        metadata: {
+          should_escalate: Boolean(response.should_escalate),
+          refused: Boolean(response.refused),
+        },
+      }),
+    })
+
+    message.handoff = {
+      ...(message.handoff || {}),
+      status: "sent",
+      ticketId: data.ticket_id || null,
+    }
+  } catch (error) {
+    message.handoff = {
+      ...(message.handoff || {}),
+      status: "error",
     }
   }
+
+  saveUiState()
+  renderApp("latest")
+}
+
+async function submitFeedback(message, helpful) {
+  if (!message || !message.answerId || !message.response) {
+    return
+  }
+
+  message.feedback = {
+    ...(message.feedback || {}),
+    status: "sending",
+    helpful,
+  }
+  saveUiState()
+  renderApp("latest")
+
+  try {
+    await fetchJson("/api/feedback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        session_id: uiState.sessionId,
+        answer_id: message.answerId,
+        question: message.question || "",
+        answer: message.response.direct_answer || message.content || "",
+        helpful,
+      }),
+    })
+
+    message.feedback = {
+      ...(message.feedback || {}),
+      status: "saved",
+      helpful,
+    }
+  } catch (error) {
+    message.feedback = {
+      ...(message.feedback || {}),
+      status: "error",
+      helpful,
+    }
+  }
+
+  saveUiState()
+  renderApp("latest")
 }
 
 function seedApplicationConversation() {
@@ -588,7 +1031,7 @@ async function ensureOnboardingConfig() {
   onboardingConfigPromise = fetchJson("/api/onboarding/config")
     .then((data) => {
       onboardingConfig = data
-      if (uiState.activeMode === "apply") {
+      if (uiState.activeMode === "unified" || uiState.activeMode === "apply") {
         renderApp("end")
       }
       return data
@@ -623,57 +1066,32 @@ function setApplicationNotice(message) {
 }
 
 async function switchMode(mode) {
-  if (mode === uiState.activeMode) {
-    return
-  }
-
-  if (mode === "apply") {
+  // Unified mode - no switching needed, but ensure application context is loaded
+  if (!onboardingConfig) {
     showTyping("processing ...")
     try {
       await ensureOnboardingConfig()
       seedApplicationConversation()
-      uiState.activeMode = "apply"
-      saveUiState()
-      renderApp("top")
     } catch (error) {
-      uiState.activeMode = "apply"
-      seedApplicationConversation()
-      setApplicationError(error.message || "The application journey could not be loaded right now.")
-      saveUiState()
-      renderApp("top")
+      setApplicationError(error.message || "The application context could not be loaded right now.")
     } finally {
       hideTyping()
     }
-    return
   }
 
-  uiState.activeMode = "knowledge"
+  uiState.activeMode = "unified"
   saveUiState()
   renderApp("top")
   questionInput.focus()
 }
 
 function updateModeUi() {
-  const isKnowledge = uiState.activeMode === "knowledge"
-
-  modeKnowledge.classList.toggle("is-active", isKnowledge)
-  modeApply.classList.toggle("is-active", !isKnowledge)
-  modeKnowledge.setAttribute("aria-selected", String(isKnowledge))
-  modeApply.setAttribute("aria-selected", String(!isKnowledge))
-
-  modeCaption.textContent = isKnowledge
-    ? "Answers based only on official MPS South Africa sources."
-    : "Complete the live membership draft in this chat."
-  if (isKnowledge) {
-    composerNote.textContent = ""
-    composerNote.classList.add("hidden")
-  } else {
-    composerNote.textContent =
-      "Use the step cards below to continue the application. Switch back to Ask MPS for sourced answers."
-    composerNote.classList.remove("hidden")
-  }
-  chatForm.classList.toggle("composer-hidden", !isKnowledge)
-  newChatButton.textContent = isKnowledge ? "New chat" : "Start again"
+  // Unified mode - show all capabilities
+  modeCaption.textContent = "Ask questions or work through your membership application, all in one chat."
+  composerNote.textContent = ""
+  composerNote.classList.add("hidden")
+  chatForm.classList.remove("composer-hidden")
+  newChatButton.textContent = "New chat"
 }
 
 function renderKnowledgeConversation(scrollMode) {
@@ -727,10 +1145,55 @@ function renderApplicationConversation(scrollMode) {
 
 function renderApp(scrollMode = "end") {
   updateModeUi()
-  if (uiState.activeMode === "knowledge") {
+  renderAnalyticsDashboard()
+  
+  if (uiState.activeMode === "unified") {
+    // Render both knowledge Q&A and application progress in one timeline
+    messagesList.innerHTML = ""
+    
+    // Add welcome message
+    renderTextMessage(
+      {
+        role: "assistant",
+        content: "Welcome to MPS Assistant. Ask me questions about MPS or start working through your membership application.",
+        isWelcome: true,
+      },
+      "MPS Assistant"
+    )
+    
+    // Render knowledge messages
+    for (const message of uiState.knowledgeConversation) {
+      renderTextMessage(message, "MPS Assistant")
+    }
+    
+    // Render application messages
+    for (const message of uiState.applicationConversation) {
+      renderTextMessage(message, "MPS Assistant")
+    }
+    
+    // Show current application step if in progress
+    if (uiState.application.currentStep > 0 && uiState.application.currentStep < APPLICATION_STEP_LABELS.length) {
+      renderApplicationCardMessage()
+    }
+    
+    messagesStage.classList.toggle(
+      "is-empty", 
+      uiState.knowledgeConversation.length === 0 && uiState.applicationConversation.length === 0
+    )
+  } else if (uiState.activeMode === "knowledge") {
     renderKnowledgeConversation(scrollMode)
   } else {
     renderApplicationConversation(scrollMode)
+  }
+  
+  if (scrollMode === "top") {
+    requestAnimationFrame(() => {
+      messagesStage.scrollTop = 0
+    })
+  } else if (scrollMode === "latest") {
+    requestAnimationFrame(() => {
+      messagesStage.scrollTop = messagesStage.scrollHeight
+    })
   }
 }
 
@@ -2177,6 +2640,19 @@ chatLauncher.addEventListener("click", () => {
 })
 
 newChatButton.addEventListener("click", () => {
+  if (uiState.activeMode === "unified") {
+    // Clear both question history and application progress in unified mode
+    uiState.knowledgeConversation = []
+    uiState.applicationConversation = []
+    uiState.application = defaultApplicationState()
+    saveUiState()
+    renderApp("top")
+    questionInput.value = ""
+    autoResizeComposer()
+    questionInput.focus()
+    return
+  }
+  
   if (uiState.activeMode === "knowledge") {
     uiState.knowledgeConversation = []
     saveUiState()
@@ -2190,12 +2666,13 @@ newChatButton.addEventListener("click", () => {
   resetApplicationJourney()
 })
 
-modeKnowledge.addEventListener("click", async () => {
-  await switchMode("knowledge")
-})
-
-modeApply.addEventListener("click", async () => {
-  await switchMode("apply")
+toggleAnalytics.addEventListener("click", () => {
+  uiState.dashboardOpen = !uiState.dashboardOpen
+  saveUiState()
+  renderAnalyticsDashboard()
+  if (uiState.dashboardOpen) {
+    void loadAnalytics(true)
+  }
 })
 
 questionInput.addEventListener("input", autoResizeComposer)
@@ -2208,8 +2685,38 @@ questionInput.addEventListener("keydown", (event) => {
 
 chatForm.addEventListener("submit", async (event) => {
   event.preventDefault()
+  
+  // Initialize unified mode on first interaction
+  if (!onboardingConfig) {
+    showTyping("processing ...")
+    try {
+      await ensureOnboardingConfig()
+      if (uiState.applicationConversation.length === 0) {
+        seedApplicationConversation()
+      }
+    } catch (error) {
+      console.error("Failed to load application context:", error)
+    } finally {
+      hideTyping()
+    }
+  }
+  
   await sendQuestion()
 })
 
-renderApp(uiState.activeMode === "knowledge" && uiState.knowledgeConversation.length ? "end" : "top")
-autoResizeComposer()
+async function initializeUi() {
+  await restoreConversationFromServer()
+  if (uiState.dashboardOpen) {
+    await loadAnalytics(true)
+  }
+  renderApp(uiState.activeMode === "unified" || (uiState.activeMode === "knowledge" && uiState.knowledgeConversation.length) ? "end" : "top")
+  autoResizeComposer()
+}
+
+setInterval(() => {
+  if (uiState.dashboardOpen) {
+    void loadAnalytics()
+  }
+}, 15000)
+
+void initializeUi()

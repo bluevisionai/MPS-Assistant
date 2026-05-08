@@ -19,6 +19,8 @@ from .browser_renderer import BrowserRenderer
 from .crawler import SiteCrawler
 from .extractors import extract_file_document
 from .llm import OpenAIService, cited_numbers, parse_structured_answer
+from .question_rewriter import rewrite_question, should_rewrite
+from .semantic_intent import SemanticIntentAnalyzer, EnrichedResponseFormulator
 
 
 class KnowledgeBaseService:
@@ -26,6 +28,8 @@ class KnowledgeBaseService:
         self.settings = settings
         self.database = database
         self.llm = OpenAIService(settings)
+        self.intent_analyzer = SemanticIntentAnalyzer(self.llm)
+        self.response_formulator = EnrichedResponseFormulator(self.llm)
         self.lock = threading.Lock()
         self.refresh_in_progress = False
         self.last_refresh_started_at: Optional[str] = None
@@ -98,17 +102,84 @@ class KnowledgeBaseService:
         self._store_document(document)
         return document.source_key
 
-    def answer_question(self, question: str, messages: Sequence[ConversationMessage] = ()) -> ChatResponse:
+    def answer_question(
+        self,
+        question: str,
+        messages: Sequence[ConversationMessage] = (),
+        session_id: Optional[str] = None,
+    ) -> ChatResponse:
         question = question.strip()
         if not question:
             raise ValueError("Question cannot be empty.")
 
         conversation_history = _normalize_conversation_history(messages, question)
-        retrieval_query = self._build_retrieval_query(question, conversation_history)
-        retrieved = self.retrieve(retrieval_query, self.settings.retrieval_top_k)
         refusal = "I don't have enough MPS-provided information to answer that confidently."
 
+        import sys
+        print(f"[DEBUG] Original question: {question}", file=sys.stderr)
+
+        retrieval_query = self._build_retrieval_query(question, conversation_history)
+        retrieved = self.retrieve(retrieval_query, self.settings.retrieval_top_k)
+
+        print(f"[DEBUG] Retrieved {len(retrieved)} chunks", file=sys.stderr)
+        if retrieved:
+            for i, chunk in enumerate(retrieved[:2], 1):
+                print(
+                    f"[DEBUG]   {i}. {chunk.document_title or chunk.file_name} (score: {chunk.combined_score:.3f})",
+                    file=sys.stderr,
+                )
+
+        avg_score = sum(c.combined_score for c in retrieved) / len(retrieved) if retrieved else 0.0
+        if should_rewrite(question, len(retrieved), avg_score):
+            print(
+                f"[DEBUG] Retrieval confidence low ({len(retrieved)} chunks, avg score {avg_score:.3f}). Trying rewrites...",
+                file=sys.stderr,
+            )
+            rewrites = rewrite_question(question)
+
+            for rewrite in rewrites[1:]:
+                print(f"[DEBUG] Trying rewritten question: {rewrite}", file=sys.stderr)
+                rewrite_query = self._build_retrieval_query(rewrite, conversation_history)
+                rewrite_retrieved = self.retrieve(rewrite_query, self.settings.retrieval_top_k)
+                rewrite_avg_score = (
+                    sum(c.combined_score for c in rewrite_retrieved) / len(rewrite_retrieved)
+                    if rewrite_retrieved
+                    else 0.0
+                )
+
+                print(
+                    f"[DEBUG]   Got {len(rewrite_retrieved)} chunks (avg score: {rewrite_avg_score:.3f})",
+                    file=sys.stderr,
+                )
+
+                if len(rewrite_retrieved) > len(retrieved) or (
+                    len(rewrite_retrieved) > 0 and rewrite_avg_score > avg_score
+                ):
+                    retrieved = rewrite_retrieved
+                    avg_score = rewrite_avg_score
+                    question = rewrite
+                    print("[DEBUG] Using rewritten question (better results)", file=sys.stderr)
+                    break
+
         if not retrieved:
+            follow_ups = self._build_follow_up_suggestions(question, refusal, True)
+            related_resources = self._build_related_resources(question, [])
+            recommendation = self._build_membership_recommendation(question, None, [])
+            confidence_score, confidence_level, should_escalate, escalation_message = self._compute_confidence(
+                question=question,
+                retrieved=[],
+                refused=True,
+                intent_signal=0.3,
+                direct_answer=refusal,
+            )
+            self._maybe_log_gap_event(
+                question=question,
+                session_id=session_id,
+                reason="no_retrieval_results",
+                confidence_score=confidence_score,
+                confidence_level=confidence_level,
+                retrieved_count=0,
+            )
             return ChatResponse(
                 direct_answer=refusal,
                 sources=[],
@@ -116,9 +187,34 @@ class KnowledgeBaseService:
                 practical_next_steps="Try rephrasing the question or refresh the official MPS site content.",
                 limitations="The current knowledge base does not contain supporting MPS passages for this question.",
                 refused=True,
+                follow_up_suggestions=follow_ups,
+                confidence_score=confidence_score,
+                confidence_level=confidence_level,
+                should_escalate=should_escalate,
+                escalation_message=escalation_message,
+                related_resources=related_resources,
+                membership_recommendation=recommendation,
             )
 
         if not self.llm.enabled:
+            follow_ups = self._build_follow_up_suggestions(question, refusal, True)
+            related_resources = self._build_related_resources(question, retrieved)
+            recommendation = self._build_membership_recommendation(question, None, retrieved)
+            confidence_score, confidence_level, should_escalate, escalation_message = self._compute_confidence(
+                question=question,
+                retrieved=retrieved,
+                refused=True,
+                intent_signal=0.4,
+                direct_answer=refusal,
+            )
+            self._maybe_log_gap_event(
+                question=question,
+                session_id=session_id,
+                reason="llm_unavailable",
+                confidence_score=confidence_score,
+                confidence_level=confidence_level,
+                retrieved_count=len(retrieved),
+            )
             return ChatResponse(
                 direct_answer=refusal,
                 sources=self._build_citations(retrieved, list(range(1, min(len(retrieved), 3) + 1))),
@@ -126,9 +222,47 @@ class KnowledgeBaseService:
                 practical_next_steps="Set OPENAI_API_KEY, then ask the question again.",
                 limitations="Without the language model, the app can search and cite sources but cannot assemble the final answer format.",
                 refused=True,
+                follow_up_suggestions=follow_ups,
+                confidence_score=confidence_score,
+                confidence_level=confidence_level,
+                should_escalate=should_escalate,
+                escalation_message=escalation_message,
+                related_resources=related_resources,
+                membership_recommendation=recommendation,
             )
 
-        raw_answer = self.llm.answer_question(question, retrieved, conversation_history)
+        print(f"[SEMANTIC] Analyzing intent for: {question[:60]}...", file=sys.stderr)
+        intent_analysis = self.intent_analyzer.analyze_intent(question, conversation_history)
+        print(f"[SEMANTIC] Intent: {intent_analysis.get_context_summary()}", file=sys.stderr)
+
+        if intent_analysis.semantic_keywords or intent_analysis.retrieval_hints:
+            enriched_query = intent_analysis.build_enriched_query()
+            print(f"[SEMANTIC] Enriched query: {enriched_query[:80]}...", file=sys.stderr)
+            enriched_retrieved = self.retrieve(enriched_query, self.settings.retrieval_top_k)
+
+            if enriched_retrieved:
+                enriched_score = sum(c.combined_score for c in enriched_retrieved) / len(enriched_retrieved)
+                original_score = sum(c.combined_score for c in retrieved) / len(retrieved) if retrieved else 0
+                print(
+                    f"[SEMANTIC] Enriched score: {enriched_score:.3f} vs original: {original_score:.3f}",
+                    file=sys.stderr,
+                )
+
+                if enriched_score > original_score * 0.8:
+                    retrieved = enriched_retrieved
+                    print("[SEMANTIC] Using enriched retrieval results", file=sys.stderr)
+
+        enriched_response = self.response_formulator.formulate_response(
+            question, intent_analysis, retrieved, conversation_history
+        )
+
+        if enriched_response:
+            print("[SEMANTIC] Using enriched response formulation", file=sys.stderr)
+            raw_answer = enriched_response
+        else:
+            print("[SEMANTIC] Using standard LLM response", file=sys.stderr)
+            raw_answer = self.llm.answer_question(question, retrieved, conversation_history)
+
         parsed = parse_structured_answer(raw_answer)
         numbers = cited_numbers(raw_answer, len(retrieved))
         if not numbers:
@@ -149,6 +283,27 @@ class KnowledgeBaseService:
         plain_english = _drop_redundant_section(plain_english, direct_answer)
         limitations = _drop_redundant_section(limitations, plain_english or direct_answer)
         practical_next_steps = _soften_short_steps(practical_next_steps)
+        follow_ups = self._build_follow_up_suggestions(question, direct_answer, refused)
+        related_resources = self._build_related_resources(question, retrieved)
+        recommendation = self._build_membership_recommendation(question, intent_analysis, retrieved)
+        intent_signal = 1.0 if (intent_analysis.semantic_keywords or intent_analysis.retrieval_hints) else 0.7
+        confidence_score, confidence_level, should_escalate, escalation_message = self._compute_confidence(
+            question=question,
+            retrieved=retrieved,
+            refused=refused,
+            intent_signal=intent_signal,
+            direct_answer=direct_answer,
+        )
+        if should_escalate or confidence_level in {"low", "very_low"}:
+            reason = "low_confidence" if not refused else "refused_answer"
+            self._maybe_log_gap_event(
+                question=question,
+                session_id=session_id,
+                reason=reason,
+                confidence_score=confidence_score,
+                confidence_level=confidence_level,
+                retrieved_count=len(retrieved),
+            )
 
         return ChatResponse(
             direct_answer=direct_answer,
@@ -157,7 +312,344 @@ class KnowledgeBaseService:
             practical_next_steps=practical_next_steps,
             limitations=limitations,
             refused=refused,
+            follow_up_suggestions=follow_ups,
+            confidence_score=confidence_score,
+            confidence_level=confidence_level,
+            should_escalate=should_escalate,
+            escalation_message=escalation_message,
+            related_resources=related_resources,
+            membership_recommendation=recommendation,
         )
+
+    def _build_membership_recommendation(
+        self,
+        question: str,
+        intent_analysis,
+        retrieved: Sequence[RetrievedChunk],
+    ) -> Optional[dict]:
+        """Infer a likely membership category and explain why."""
+        text_parts = [question.lower()]
+        if intent_analysis is not None:
+            text_parts.append(getattr(intent_analysis, "primary_intent", "") or "")
+            text_parts.extend(getattr(intent_analysis, "semantic_keywords", []) or [])
+
+        for chunk in list(retrieved)[:3]:
+            text_parts.append((chunk.heading or "").lower())
+            text_parts.append((chunk.document_title or "").lower())
+            text_parts.append((chunk.text or "")[:350].lower())
+
+        corpus = " ".join(text_parts)
+
+        rules = [
+            (
+                "student",
+                ["student", "intern", "community service"],
+                {
+                    "category": "Student / Early Career",
+                    "title": "MPS Student or Early Career Membership",
+                    "reason": "Your question suggests a training or early-career context with lower-cost entry options.",
+                    "fit_score": 0.84,
+                    "next_question": "What documents are needed for a student or intern membership application?",
+                },
+            ),
+            (
+                "state",
+                ["state doctor", "public sector", "government hospital", "state"],
+                {
+                    "category": "State Doctor",
+                    "title": "MPS State Doctor Membership",
+                    "reason": "Your context appears aligned to public-sector practice, which usually maps to state-focused options.",
+                    "fit_score": 0.82,
+                    "next_question": "What benefits are specific to state doctor membership?",
+                },
+            ),
+            (
+                "specialist",
+                ["specialist", "consultant", "registrar", "surgeon"],
+                {
+                    "category": "Private Specialist",
+                    "title": "MPS Specialist Membership",
+                    "reason": "Your query indicates specialist-level practice and potentially higher-risk clinical scope.",
+                    "fit_score": 0.86,
+                    "next_question": "How is specialist membership pricing calculated?",
+                },
+            ),
+            (
+                "gp",
+                ["gp", "general practitioner", "family practice", "private doctor"],
+                {
+                    "category": "Private GP",
+                    "title": "MPS Private GP Membership",
+                    "reason": "The question matches general private practice scenarios often associated with GP membership tracks.",
+                    "fit_score": 0.83,
+                    "next_question": "Can I compare part-time versus full-time GP membership costs?",
+                },
+            ),
+            (
+                "organisation",
+                ["organisation", "clinic", "practice group", "hospital group", "company"],
+                {
+                    "category": "Organisation",
+                    "title": "MPS Organisation Membership",
+                    "reason": "The wording suggests multi-practitioner or entity-level coverage requirements.",
+                    "fit_score": 0.8,
+                    "next_question": "What information is required for an organisation application?",
+                },
+            ),
+        ]
+
+        for _, keywords, recommendation in rules:
+            if any(keyword in corpus for keyword in keywords):
+                return recommendation
+
+        if any(x in corpus for x in ["apply", "join", "membership", "cover", "benefit", "eligib"]):
+            return {
+                "category": "Practitioner (General)",
+                "title": "MPS Practitioner Membership",
+                "reason": "Based on your query, a practitioner membership path appears most relevant; we can narrow this with role details.",
+                "fit_score": 0.68,
+                "next_question": "Which membership category should I choose for my exact role and working pattern?",
+            }
+
+        return None
+
+    def _build_related_resources(self, question: str, retrieved: Sequence[RetrievedChunk]) -> List[dict]:
+        """Build multimodal related resources (PDFs, forms, charts, links)."""
+        resources: List[dict] = []
+        q = question.lower()
+
+        seen_urls = set()
+
+        for chunk in retrieved:
+            file_name = (chunk.file_name or "").strip()
+            doc_title = (chunk.document_title or chunk.page_title or file_name or "MPS document").strip()
+            url = (chunk.url or "").strip()
+
+            if file_name.lower().endswith(".pdf") and url and url not in seen_urls:
+                resources.append(
+                    {
+                        "kind": "pdf",
+                        "title": doc_title,
+                        "url": url,
+                        "description": "Reference PDF from MPS knowledge base.",
+                    }
+                )
+                seen_urls.add(url)
+
+            if len(resources) >= 2:
+                break
+
+        if any(x in q for x in ["apply", "application", "join", "register", "form"]):
+            form_url = self.settings.onboarding_portal_url
+            if form_url and form_url not in seen_urls:
+                resources.append(
+                    {
+                        "kind": "form",
+                        "title": "MPS membership application form",
+                        "url": form_url,
+                        "description": "Start or continue your online application.",
+                    }
+                )
+                seen_urls.add(form_url)
+
+        if any(x in q for x in ["cost", "price", "fee", "quote", "compare", "chart"]):
+            chart_url = "/api/onboarding/rate-card"
+            if chart_url not in seen_urls:
+                resources.append(
+                    {
+                        "kind": "chart",
+                        "title": "Membership pricing comparison data",
+                        "url": chart_url,
+                        "description": "Live rate-card data for category and hours comparisons.",
+                    }
+                )
+                seen_urls.add(chart_url)
+
+        if not resources and retrieved:
+            first = retrieved[0]
+            fallback_url = (first.url or "").strip()
+            if fallback_url and fallback_url not in seen_urls:
+                resources.append(
+                    {
+                        "kind": "link",
+                        "title": (first.document_title or first.page_title or "MPS reference page"),
+                        "url": fallback_url,
+                        "description": "Primary reference related to your question.",
+                    }
+                )
+
+        return resources[:3]
+
+    def _maybe_log_gap_event(
+        self,
+        question: str,
+        session_id: Optional[str],
+        reason: str,
+        confidence_score: float,
+        confidence_level: str,
+        retrieved_count: int,
+    ) -> None:
+        """Persist potential KB coverage gaps for later analysis."""
+        normalized_topic = self._normalize_gap_topic(question)
+        self.database.log_kb_gap_event(
+            question=question,
+            normalized_topic=normalized_topic,
+            reason=reason,
+            confidence_score=confidence_score,
+            confidence_level=confidence_level,
+            retrieved_count=retrieved_count,
+            session_id=session_id,
+        )
+
+    def _normalize_gap_topic(self, question: str) -> str:
+        q = question.lower()
+        if any(x in q for x in ["benefit", "coverage", "cover", "indemnity"]):
+            return "benefits-and-coverage"
+        if any(x in q for x in ["cost", "price", "fee", "premium", "payment"]):
+            return "pricing-and-payments"
+        if any(x in q for x in ["apply", "application", "join", "register"]):
+            return "application-process"
+        if any(x in q for x in ["eligib", "qualif", "requirements"]):
+            return "eligibility"
+        if any(x in q for x in ["claim", "complaint", "incident", "legal"]):
+            return "claims-and-support"
+        if any(x in q for x in ["cancel", "termination", "end membership"]):
+            return "cancellation"
+
+        tokens = re.findall(r"[a-z0-9]{4,}", q)
+        stop = {
+            "what", "which", "when", "where", "about", "does", "with", "from",
+            "that", "this", "have", "your", "mps", "south", "africa", "membership",
+        }
+        keywords = [t for t in tokens if t not in stop][:3]
+        return "-".join(keywords) if keywords else "general-coverage-gap"
+
+    def _compute_confidence(
+        self,
+        question: str,
+        retrieved: Sequence[RetrievedChunk],
+        refused: bool,
+        intent_signal: float,
+        direct_answer: str,
+    ) -> tuple[float, str, bool, Optional[str]]:
+        """Compute confidence score and escalation decision."""
+        top_k = max(1, int(self.settings.retrieval_top_k))
+        retrieval_count_score = min(1.0, len(retrieved) / top_k)
+
+        avg_combined = sum(chunk.combined_score for chunk in retrieved) / len(retrieved) if retrieved else 0.0
+        retrieval_quality_score = min(1.0, max(0.0, avg_combined * 9.0))
+        retrieval_score = (retrieval_count_score * 0.55) + (retrieval_quality_score * 0.45)
+
+        answer_len = len((direct_answer or "").strip())
+        has_substance = 1.0 if answer_len >= 60 else (0.6 if answer_len >= 25 else 0.35)
+        formulation_score = 0.0 if refused else has_substance
+
+        score = (
+            max(0.0, min(1.0, intent_signal)) * 0.25
+            + retrieval_score * 0.5
+            + formulation_score * 0.25
+        )
+        score = max(0.0, min(1.0, score))
+
+        if score >= 0.75:
+            level = "high"
+        elif score >= 0.55:
+            level = "medium"
+        elif score >= 0.4:
+            level = "low"
+        else:
+            level = "very_low"
+
+        should_escalate = refused or score < 0.45
+        escalation_message = None
+        if should_escalate:
+            escalation_message = (
+                "I may not have enough high-confidence MPS evidence for this specific question. "
+                "Please confirm with MPS support before taking action."
+            )
+
+        return round(score, 3), level, should_escalate, escalation_message
+
+    def _build_follow_up_suggestions(self, question: str, answer_text: str, refused: bool) -> List[str]:
+        """Build quick follow-up suggestions to guide next questions."""
+        q = question.lower()
+        a = (answer_text or "").lower()
+
+        if refused:
+            return [
+                "Can you show me what MPS says about membership benefits?",
+                "What are the application steps for joining MPS?",
+                "How can I contact MPS for this specific question?",
+            ]
+
+        suggestions: List[str] = []
+
+        if any(term in q for term in ["benefit", "cover", "coverage", "protect", "indemnity"]):
+            suggestions.extend(
+                [
+                    "What is not included in this cover?",
+                    "How do claims work under this membership?",
+                    "Which membership option is best for my role?",
+                ]
+            )
+        elif any(term in q for term in ["cost", "price", "fee", "pay", "premium"]):
+            suggestions.extend(
+                [
+                    "What factors affect my membership price?",
+                    "Can I get a quote based on my working hours?",
+                    "When and how are payments collected?",
+                ]
+            )
+        elif any(term in q for term in ["apply", "application", "join", "signup", "register"]):
+            suggestions.extend(
+                [
+                    "What documents do I need for the application?",
+                    "How long does the application approval take?",
+                    "Can I save and continue my application later?",
+                ]
+            )
+        elif any(term in q for term in ["eligib", "qualif", "requirement", "can i"]):
+            suggestions.extend(
+                [
+                    "What membership category should I choose?",
+                    "What details are needed to confirm eligibility?",
+                    "Can part-time practitioners apply?",
+                ]
+            )
+        elif any(term in q for term in ["claim", "complaint", "incident", "legal"]):
+            suggestions.extend(
+                [
+                    "What should I do immediately after an incident?",
+                    "How do I notify MPS about a potential claim?",
+                    "What support does MPS provide during investigations?",
+                ]
+            )
+        else:
+            suggestions.extend(
+                [
+                    "What are the next steps I should take now?",
+                    "How does this affect my membership application?",
+                    "Can you explain this in simpler terms for my situation?",
+                ]
+            )
+
+        if "application" in a and all("application" not in s.lower() for s in suggestions):
+            suggestions.append("What are the full membership application steps?")
+
+        cleaned: List[str] = []
+        original = question.strip().lower()
+        for suggestion in suggestions:
+            s = suggestion.strip()
+            if not s:
+                continue
+            if s.lower() == original:
+                continue
+            if s not in cleaned:
+                cleaned.append(s)
+            if len(cleaned) >= 3:
+                break
+
+        return cleaned
 
     def _build_retrieval_query(self, question: str, messages: Sequence[ConversationMessage]) -> str:
         if not messages or not _is_follow_up_question(question):
