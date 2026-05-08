@@ -1521,7 +1521,7 @@ function buildContactStep() {
   const fields = app.fields
   const portalMessage = onboardingConfig?.portal_auth?.enabled
     ? onboardingConfig.portal_auth.message
-    : "The chat uses the live OTP and draft application endpoints directly."
+    : "Complete verification on the official portal with captcha, then return here."
   return `
     ${applicationHeader("Contact details and verification", "Add the details MPS uses to start your application draft.")}
       <div class="journey-meta-chip">${escapeHtml(portalMessage)}</div>
@@ -1546,16 +1546,13 @@ function buildContactStep() {
 
       <div class="journey-block">
         <div class="journey-block-head">
-          <strong>Email verification</strong>
-          <span class="journey-state-pill ${app.verified ? "is-verified" : ""}">${app.verified ? "Verified" : "Not verified"}</span>
+          <strong>Portal captcha verification</strong>
+          <span class="journey-state-pill ${app.verified ? "is-verified" : ""}">${app.verified ? "Confirmed" : "Not confirmed"}</span>
         </div>
-        <p class="journey-copy-small">The live portal also offers captcha, but this chat flow uses the email OTP path.</p>
+        <p class="journey-copy-small">Use the official MPS portal to complete captcha and verification, then confirm below.</p>
         <div class="journey-inline-actions">
-          <button class="journey-button journey-button-secondary" id="application-send-otp" type="button">
-            ${app.otpSent ? "Resend code" : "Send verification code"}
-          </button>
-          <input id="application-otp-code" class="journey-inline-input" type="text" inputmode="numeric" maxlength="6" placeholder="6-digit code" ${app.verified ? "disabled" : ""} />
-          <button class="journey-button" id="application-verify-otp" type="button" ${app.verified ? "disabled" : ""}>Verify</button>
+          <a class="journey-button journey-button-secondary" href="${escapeHtml(onboardingConfig.portal_url)}" target="_blank" rel="noreferrer">Open portal</a>
+          <button class="journey-button ${app.verified ? "journey-button-secondary" : ""}" id="application-confirm-captcha" type="button">${app.verified ? "Captcha completed" : "I completed captcha"}</button>
         </div>
       </div>
 
@@ -2258,7 +2255,7 @@ function bindApplicationCardEvents(container) {
       }
       app.membershipCategory = roleId
       clearApplicationFeedback()
-      pushApplicationMessages(role.title, "Next I need your contact details and email verification.", 1)
+      pushApplicationMessages(role.title, "Next I need your contact details and portal captcha verification.", 1)
       renderApp("latest")
     })
   })
@@ -2369,65 +2366,14 @@ function bindApplicationCardEvents(container) {
     })
   }
 
-  const sendOtpButton = container.querySelector("#application-send-otp")
-  if (sendOtpButton) {
-    sendOtpButton.addEventListener("click", async () => {
+  const confirmCaptchaButton = container.querySelector("#application-confirm-captcha")
+  if (confirmCaptchaButton) {
+    confirmCaptchaButton.addEventListener("click", () => {
       clearApplicationFeedback()
-      if (!isValidEmail(app.fields.email || "")) {
-        setApplicationError("Enter a valid email address first.")
-        saveUiState()
-        renderApp("end")
-        return
-      }
-      showTyping("Sending the live verification code.")
-      setApplicationPendingState(true)
-      try {
-        const data = await fetchJson("/api/onboarding/send-otp", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: app.fields.email }),
-        })
-        app.otpSent = true
-        setApplicationNotice(data.message || "Verification code sent.")
-        saveUiState()
-        renderApp("end")
-      } catch (error) {
-        setApplicationError(error.message || "Unable to send the verification code.")
-        saveUiState()
-        renderApp("end")
-      } finally {
-        hideTyping()
-        setApplicationPendingState(false)
-      }
-    })
-  }
-
-  const verifyOtpButton = container.querySelector("#application-verify-otp")
-  const otpCodeInput = container.querySelector("#application-otp-code")
-  if (verifyOtpButton && otpCodeInput) {
-    verifyOtpButton.addEventListener("click", async () => {
-      clearApplicationFeedback()
-      showTyping("Checking the live verification code.")
-      setApplicationPendingState(true)
-      try {
-        const data = await fetchJson("/api/onboarding/verify-otp", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: app.fields.email, code: otpCodeInput.value }),
-        })
-        app.verified = true
-        app.otpSent = true
-        setApplicationNotice(data.message || "Email verified.")
-        saveUiState()
-        renderApp("end")
-      } catch (error) {
-        setApplicationError(error.message || "Verification failed.")
-        saveUiState()
-        renderApp("end")
-      } finally {
-        hideTyping()
-        setApplicationPendingState(false)
-      }
+      app.verified = true
+      setApplicationNotice("Captcha and portal verification confirmed.")
+      saveUiState()
+      renderApp("end")
     })
   }
 
@@ -2517,7 +2463,7 @@ function validateContactStep() {
     return "Confirm the special category data consent before continuing."
   }
   if (!app.verified) {
-    return "Verify your email address before continuing."
+    return "Complete captcha verification on the official portal, then confirm it before continuing."
   }
   return ""
 }
@@ -2628,7 +2574,7 @@ async function handleApplicationContinue() {
       return
     }
     pushApplicationMessages(
-      "Contact details added and email verified.",
+      "Contact details added and portal captcha confirmed.",
       "Now choose the live pricing inputs so I can pull the current quote.",
       2
     )
