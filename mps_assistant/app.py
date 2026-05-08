@@ -43,6 +43,7 @@ app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
+        request,
         "index.html",
         {
             "request": request,
@@ -61,7 +62,7 @@ async def healthz() -> dict:
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest) -> ChatResponse:
     try:
-        return knowledge_base.answer_question(request.question)
+        return knowledge_base.answer_question(request.question, request.messages)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     except RuntimeError as error:

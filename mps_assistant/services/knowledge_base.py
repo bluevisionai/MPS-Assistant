@@ -11,7 +11,7 @@ import numpy as np
 
 from ..config import Settings
 from ..database import Database
-from ..schemas import ChatResponse, ExtractedDocument, RetrievedChunk, SourceCitation
+from ..schemas import ChatResponse, ConversationMessage, ExtractedDocument, RetrievedChunk, SourceCitation
 from .chunking import chunk_document
 from .application_metadata import build_walkthrough_documents
 from .browser_renderer import BrowserRenderer
@@ -97,12 +97,14 @@ class KnowledgeBaseService:
         self._store_document(document)
         return document.source_key
 
-    def answer_question(self, question: str) -> ChatResponse:
+    def answer_question(self, question: str, messages: Sequence[ConversationMessage] = ()) -> ChatResponse:
         question = question.strip()
         if not question:
             raise ValueError("Question cannot be empty.")
 
-        retrieved = self.retrieve(question, self.settings.retrieval_top_k)
+        conversation_history = _normalize_conversation_history(messages, question)
+        retrieval_query = self._build_retrieval_query(question, conversation_history)
+        retrieved = self.retrieve(retrieval_query, self.settings.retrieval_top_k)
         refusal = "I don't have enough MPS-provided information to answer that confidently."
 
         if not retrieved:
@@ -125,14 +127,16 @@ class KnowledgeBaseService:
                 refused=True,
             )
 
-        raw_answer = self.llm.answer_question(question, retrieved)
+        raw_answer = self.llm.answer_question(question, retrieved, conversation_history)
         parsed = parse_structured_answer(raw_answer)
         numbers = cited_numbers(raw_answer, len(retrieved))
         if not numbers:
             numbers = list(range(1, min(len(retrieved), 3) + 1))
 
         direct_answer = parsed["direct_answer"].strip() or refusal
-        refused = direct_answer == refusal
+        refused = _looks_like_refusal(direct_answer, refusal)
+        if refused:
+            direct_answer = refusal
 
         return ChatResponse(
             direct_answer=direct_answer,
@@ -142,6 +146,25 @@ class KnowledgeBaseService:
             limitations=parsed["limitations"].strip(),
             refused=refused,
         )
+
+    def _build_retrieval_query(self, question: str, messages: Sequence[ConversationMessage]) -> str:
+        if not messages or not _is_follow_up_question(question):
+            return question
+
+        prior_context = []
+        for message in reversed(messages):
+            content = " ".join(message.content.split())
+            if not content:
+                continue
+            prior_context.append(f"{message.role}: {content[:260]}")
+            if len(prior_context) >= 3:
+                break
+
+        prior_context.reverse()
+        if not prior_context:
+            return question
+
+        return f"{' '.join(prior_context)} Current question: {question}"
 
     def retrieve(self, question: str, limit: int) -> List[RetrievedChunk]:
         lexical_ids = self.database.lexical_search(question, self.settings.lexical_top_k)
@@ -421,3 +444,57 @@ def _significant_terms(text: str) -> List[str]:
         if term not in stopwords and term not in terms:
             terms.append(term)
     return terms
+
+
+def _normalize_conversation_history(
+    messages: Sequence[ConversationMessage],
+    current_question: str,
+) -> List[ConversationMessage]:
+    normalized: List[ConversationMessage] = []
+    for message in messages:
+        content = " ".join(message.content.split())
+        if not content:
+            continue
+        normalized.append(ConversationMessage(role=message.role, content=content))
+
+    if normalized and normalized[-1].role == "user" and normalized[-1].content.strip() == current_question.strip():
+        normalized = normalized[:-1]
+
+    return normalized[-6:]
+
+
+def _is_follow_up_question(question: str) -> bool:
+    normalized = question.strip().lower()
+    if len(normalized.split()) <= 8:
+        return True
+
+    follow_up_terms = (
+        "also",
+        "and ",
+        "but ",
+        "does that",
+        "for that",
+        "for this",
+        "how about",
+        "if so",
+        "it ",
+        "same",
+        "that ",
+        "this ",
+        "those ",
+        "what about",
+        "what if",
+        "which one",
+    )
+    return any(term in normalized for term in follow_up_terms)
+
+
+def _looks_like_refusal(answer_text: str, refusal_text: str) -> bool:
+    def normalize(value: str) -> str:
+        normalized = value.strip().lower()
+        normalized = normalized.replace("’", "'").replace("‘", "'")
+        normalized = normalized.replace("“", '"').replace("”", '"')
+        normalized = " ".join(normalized.split())
+        return normalized
+
+    return normalize(answer_text) == normalize(refusal_text)

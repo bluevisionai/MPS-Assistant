@@ -6,7 +6,7 @@ from typing import List, Optional, Sequence
 from openai import BadRequestError, NotFoundError, OpenAI, PermissionDeniedError
 
 from ..config import Settings
-from ..schemas import RetrievedChunk
+from ..schemas import ConversationMessage, RetrievedChunk
 
 
 class OpenAIService:
@@ -33,7 +33,12 @@ class OpenAIService:
             embeddings.extend(item.embedding for item in response.data)
         return embeddings
 
-    def answer_question(self, question: str, retrieved_chunks: Sequence[RetrievedChunk]) -> str:
+    def answer_question(
+        self,
+        question: str,
+        retrieved_chunks: Sequence[RetrievedChunk],
+        conversation_messages: Sequence[ConversationMessage] = (),
+    ) -> str:
         if not self.enabled:
             raise RuntimeError("OPENAI_API_KEY is required for question answering.")
         if self.client is None:
@@ -65,11 +70,15 @@ class OpenAIService:
             "\"I don't have enough MPS-provided information to answer that confidently.\" "
             "Never provide legal, medical, financial, or indemnity advice. When wording is ambiguous, "
             "say so and recommend contacting MPS directly. Use citation numbers like [1] or [2] only "
-            "for statements supported by the excerpts."
+            "for statements supported by the excerpts. Keep the tone natural and conversational, like "
+            "a careful back-and-forth chat assistant, but stay precise and conservative on high-stakes topics."
         )
         context_text = "\n\n".join(context_blocks)
+        conversation_text = _format_conversation_history(conversation_messages)
 
         prompt = (
+            "Conversation so far:\n"
+            f"{conversation_text}\n\n"
             "Question:\n"
             f"{question}\n\n"
             "Relevant MPS excerpts:\n"
@@ -178,3 +187,25 @@ def cited_numbers(answer_text: str, max_number: int) -> List[int]:
             seen.add(number)
             numbers.append(number)
     return numbers
+
+
+def _format_conversation_history(messages: Sequence[ConversationMessage]) -> str:
+    if not messages:
+        return "No prior conversation."
+
+    formatted: List[str] = []
+    remaining_chars = 3200
+    for message in list(messages)[-6:]:
+        content = re.sub(r"\s+", " ", message.content).strip()
+        if not content:
+            continue
+        snippet = content[:600]
+        line = f"{message.role.upper()}: {snippet}"
+        if len(line) > remaining_chars:
+            line = line[:remaining_chars]
+        formatted.append(line)
+        remaining_chars -= len(line) + 2
+        if remaining_chars <= 0:
+            break
+
+    return "\n\n".join(formatted) if formatted else "No prior conversation."

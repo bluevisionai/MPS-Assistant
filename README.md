@@ -99,6 +99,16 @@ Run the supported `/20` dummy walkthrough once to store the observed request mod
 python -m mps_assistant.cli harvest-application https://apply.medicalprotection.org/20
 ```
 
+## UI smoke test
+
+Run the browser smoke test for the main chat journeys:
+
+```bash
+python scripts/chat_ui_smoke_test.py
+```
+
+This checks the desktop and mobile chat flows, follow-up questions, session persistence, tools drawer, collapse/reopen behavior, and new-chat reset.
+
 ## Azure App Service
 
 Use `./startup.sh` as the App Service startup command.

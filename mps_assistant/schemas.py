@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 @dataclass
@@ -55,8 +55,14 @@ class RetrievedChunk:
     semantic_score: Optional[float]
 
 
+class ConversationMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
 class ChatRequest(BaseModel):
     question: str
+    messages: List[ConversationMessage] = Field(default_factory=list)
 
 
 class SourceCitation(BaseModel):
