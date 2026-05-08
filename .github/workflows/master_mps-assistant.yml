@@ -73,4 +73,5 @@ jobs:
         with:
           app-name: 'mps-assistant'
           slot-name: 'Production'
+          startup-command: 'bash startup.sh'
           
