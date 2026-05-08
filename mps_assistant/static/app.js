@@ -924,6 +924,7 @@ async function sendQuestion(prefilledQuestion) {
   } finally {
     hideTyping()
     setKnowledgePendingState(false)
+    renderApp("latest")
     questionInput.focus()
   }
 }
