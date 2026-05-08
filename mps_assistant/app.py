@@ -6,10 +6,11 @@ from pathlib import Path
 from typing import List
 
 from apscheduler.schedulers.background import BackgroundScheduler
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, status as http_status
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.middleware.sessions import SessionMiddleware
 
 from .config import get_settings
 from .database import Database
@@ -69,8 +70,19 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
+app.add_middleware(SessionMiddleware, secret_key=settings.admin_session_secret)
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
+
+
+def _is_admin_authenticated(request: Request) -> bool:
+    return bool(request.session.get("is_admin_authenticated"))
+
+
+def _require_admin(request: Request) -> None:
+    if _is_admin_authenticated(request):
+        return
+    raise HTTPException(status_code=http_status.HTTP_401_UNAUTHORIZED, detail="Admin authentication required")
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -83,6 +95,65 @@ async def index(request: Request) -> HTMLResponse:
             "app_name": settings.app_name,
             "seed_url": settings.seed_url,
             "status": knowledge_base.status(),
+        },
+    )
+
+
+@app.get("/admin/login", response_class=HTMLResponse)
+async def admin_login_page(request: Request) -> HTMLResponse:
+    if _is_admin_authenticated(request):
+        return RedirectResponse(url="/admin/dashboard", status_code=http_status.HTTP_303_SEE_OTHER)
+
+    return templates.TemplateResponse(
+        request,
+        "admin_login.html",
+        {
+            "request": request,
+            "app_name": settings.app_name,
+            "error": "",
+        },
+    )
+
+
+@app.post("/admin/login", response_class=HTMLResponse)
+async def admin_login_submit(
+    request: Request,
+    username: str = Form(default=""),
+    password: str = Form(default=""),
+) -> HTMLResponse:
+    if username == settings.admin_dashboard_username and password == settings.admin_dashboard_password:
+        request.session["is_admin_authenticated"] = True
+        return RedirectResponse(url="/admin/dashboard", status_code=http_status.HTTP_303_SEE_OTHER)
+
+    return templates.TemplateResponse(
+        request,
+        "admin_login.html",
+        {
+            "request": request,
+            "app_name": settings.app_name,
+            "error": "Invalid username or password.",
+        },
+        status_code=http_status.HTTP_401_UNAUTHORIZED,
+    )
+
+
+@app.post("/admin/logout")
+async def admin_logout(request: Request) -> RedirectResponse:
+    request.session.pop("is_admin_authenticated", None)
+    return RedirectResponse(url="/admin/login", status_code=http_status.HTTP_303_SEE_OTHER)
+
+
+@app.get("/admin/dashboard", response_class=HTMLResponse)
+async def admin_dashboard(request: Request) -> HTMLResponse:
+    if not _is_admin_authenticated(request):
+        return RedirectResponse(url="/admin/login", status_code=http_status.HTTP_303_SEE_OTHER)
+
+    return templates.TemplateResponse(
+        request,
+        "admin_dashboard.html",
+        {
+            "request": request,
+            "app_name": settings.app_name,
         },
     )
 
@@ -211,7 +282,8 @@ async def status() -> StatusResponse:
 
 
 @app.get("/api/analytics", response_model=AnalyticsResponse)
-async def analytics() -> AnalyticsResponse:
+async def analytics(request: Request) -> AnalyticsResponse:
+    _require_admin(request)
     status_payload = knowledge_base.status()
     summary = database.analytics_summary()
 
@@ -232,7 +304,8 @@ async def analytics() -> AnalyticsResponse:
 
 
 @app.get("/api/gaps", response_model=GapSummaryResponse)
-async def gaps(top: int = 10) -> GapSummaryResponse:
+async def gaps(request: Request, top: int = 10) -> GapSummaryResponse:
+    _require_admin(request)
     summary = database.kb_gap_summary(top_n=top)
     return GapSummaryResponse(**summary)
 

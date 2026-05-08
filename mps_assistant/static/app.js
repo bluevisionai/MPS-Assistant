@@ -2666,14 +2666,16 @@ newChatButton.addEventListener("click", () => {
   resetApplicationJourney()
 })
 
-toggleAnalytics.addEventListener("click", () => {
-  uiState.dashboardOpen = !uiState.dashboardOpen
-  saveUiState()
-  renderAnalyticsDashboard()
-  if (uiState.dashboardOpen) {
-    void loadAnalytics(true)
-  }
-})
+if (toggleAnalytics) {
+  toggleAnalytics.addEventListener("click", () => {
+    uiState.dashboardOpen = !uiState.dashboardOpen
+    saveUiState()
+    renderAnalyticsDashboard()
+    if (uiState.dashboardOpen) {
+      void loadAnalytics(true)
+    }
+  })
+}
 
 questionInput.addEventListener("input", autoResizeComposer)
 questionInput.addEventListener("keydown", (event) => {

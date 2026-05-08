@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     onboarding_portal_username: str = ""
     onboarding_portal_password: str = ""
     onboarding_timeout_seconds: int = 20
+    admin_dashboard_username: str = "admin"
+    admin_dashboard_password: str = "change-me"
+    admin_session_secret: str = "change-me-session-secret"
     data_dir: Path = Field(default_factory=_default_data_root)
     database_path: Path = Field(default_factory=lambda: _default_data_root() / "mps_assistant.db")
     raw_download_dir: Path = Field(default_factory=lambda: _default_data_root() / "raw")
