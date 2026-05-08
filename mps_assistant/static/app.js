@@ -907,6 +907,8 @@ async function sendQuestion(prefilledQuestion) {
     return
   }
 
+  maybeOpenApplicationJourneyFromQuestion(question)
+
   showTyping("processing ...")
   setKnowledgePendingState(true)
 
@@ -990,6 +992,42 @@ function hasSavedApplicationProgress() {
       app.submitResult ||
       Object.keys(app.underwritingAnswers || {}).length
   )
+}
+
+function detectApplicationStartIntent(question) {
+  const text = String(question || "").trim().toLowerCase()
+  if (!text) {
+    return false
+  }
+  return (
+    /(start|begin|open|continue|resume)\s+(the\s+)?(application|membership\s+application|membership\s+journey)/.test(text) ||
+    /(i\s+want\s+to|help\s+me)\s+(apply|join|start\s+my\s+application)/.test(text) ||
+    /how\s+do\s+i\s+(apply|join)/.test(text)
+  )
+}
+
+function maybeOpenApplicationJourneyFromQuestion(question) {
+  if (!detectApplicationStartIntent(question)) {
+    return
+  }
+
+  const app = applicationState()
+  const hadProgress = hasSavedApplicationProgress()
+  app.workflowState = "active"
+  app.cardVisible = true
+
+  if (uiState.applicationConversation.length === 0) {
+    seedApplicationConversation()
+  }
+
+  uiState.knowledgeConversation.push({
+    role: "assistant",
+    content: hadProgress
+      ? "I will keep answering your questions, and I have also resumed your membership application below."
+      : "I will answer your question, and I have opened the membership application journey below so you can start anytime.",
+  })
+  saveUiState()
+  renderApp("latest")
 }
 
 function handleApplicationPromptCommand(question) {
