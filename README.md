@@ -8,6 +8,7 @@ MPS Assistant is a restricted-source retrieval app for Medical Protection South 
 - Prioritises the South Africa join/member-type pages so membership application guidance is captured early
 - Follows South Africa HTML pages on `www.medicalprotection.org`
 - Renders and extracts the public MPS application flows on `apply.medicalprotection.org`
+- Captures application bootstrap metadata such as scheme settings, route maps, upload limits, and field inventories from the official application host
 - Downloads linked public resources such as PDF, DOCX, XLSX, CSV, TXT, and PPTX files on `*.medicalprotection.org`
 - Extracts text plus source metadata:
   - URL
@@ -33,7 +34,7 @@ MPS Assistant is a restricted-source retrieval app for Medical Protection South 
 
 ## Requirements
 
-- Python 3.9+
+- Python 3.13
 - An OpenAI API key for embeddings and answer generation
 - Google Chrome installed locally for rendered application-form crawling
 
@@ -51,10 +52,11 @@ pip install -r requirements.txt
 ```
 
 3. Copy `.env.example` to `.env` and set `OPENAI_API_KEY`.
+   The default answer model is `gpt-5.4-mini`. If that model is not available to your project, the app will try `gpt-5.5`, then `gpt-5.4`, then `gpt-5-mini`, then `gpt-4.1-mini`.
 4. Start the app:
 
 ```bash
-python3 -m uvicorn mps_assistant.app:app --reload
+python -m uvicorn mps_assistant.app:app --reload
 ```
 
 5. Open `http://127.0.0.1:8000`.
@@ -82,18 +84,55 @@ python3 -m uvicorn mps_assistant.app:app --reload
 Refresh the official MPS site from the terminal:
 
 ```bash
-python3 -m mps_assistant.cli refresh
+python -m mps_assistant.cli refresh
 ```
 
 Run a bounded refresh for a smoke test:
 
 ```bash
-python3 -m mps_assistant.cli refresh --max-pages 25
+python -m mps_assistant.cli refresh --max-pages 25
 ```
+
+Run the supported `/20` dummy walkthrough once to store the observed request model without trying to bypass server-side protections:
+
+```bash
+python -m mps_assistant.cli harvest-application https://apply.medicalprotection.org/20
+```
+
+## Azure App Service
+
+Use `./startup.sh` as the App Service startup command.
+
+```bash
+./startup.sh
+```
+
+Recommended App Service application settings:
+
+- App Service runtime stack: `PYTHON|3.13`
+- `OPENAI_API_KEY`
+- `OPENAI_MODEL=gpt-5.4-mini`
+- `OPENAI_FALLBACK_MODELS=gpt-5.5,gpt-5.4,gpt-5-mini,gpt-4.1-mini`
+- `DATA_DIR=/home/site/data`
+- `ENABLE_SCHEDULER=false`
+- `AUTO_REFRESH_ON_STARTUP=false`
+- `SQLITE_JOURNAL_MODE=DELETE`
+- `WEB_CONCURRENCY=1`
+
+Health check path:
+
+- `/healthz`
+
+Important App Service constraints for this codebase:
+
+- The app currently uses SQLite plus local files for the knowledge base. Treat this as a single-instance deployment unless you replace those with managed shared services.
+- Scheduler-based refresh jobs are disabled by default on App Service to avoid duplicate crawls across workers or instances. Use the existing `POST /api/refresh` endpoint from an external scheduler if you want automated refreshes.
+- Stock Python App Service images do not include Chrome/Chromedriver. That means rendered crawling of `apply.medicalprotection.org` will not work there unless you use a custom image or otherwise provide a compatible browser runtime.
 
 ## Notes
 
 - The crawler intentionally stays scoped to the official MPS South Africa site and linked `medicalprotection.org` resources.
+- The manual `harvest-application` command is separate from scheduled refreshes so the app does not repeatedly submit dummy form data to the production application endpoint.
 - HTML crawling is limited by `CRAWL_MAX_PAGES` in `.env`.
 - Refresh runs automatically on first startup if the knowledge base is empty, and then on the configured interval.
 # MPS-Assistant

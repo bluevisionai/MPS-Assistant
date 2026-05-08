@@ -1,0 +1,277 @@
+:root {
+  --ink: #0d2438;
+  --ink-soft: #425a6f;
+  --line: rgba(13, 36, 56, 0.12);
+  --sky: #d6ecf3;
+  --sea: #76b8c9;
+  --cream: #fbf8f1;
+  --sand: #efe4d2;
+  --white: #ffffff;
+  --accent: #bd5a32;
+  --success: #285e55;
+  --shadow: 0 20px 50px rgba(13, 36, 56, 0.12);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: Georgia, "Times New Roman", serif;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at top left, rgba(118, 184, 201, 0.3), transparent 28%),
+    linear-gradient(135deg, var(--cream), #f5efe4 60%, var(--sand));
+}
+
+a {
+  color: var(--accent);
+}
+
+.page-shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) 1fr;
+}
+
+.sidebar {
+  padding: 32px 24px;
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(12px);
+  border-right: 1px solid var(--line);
+}
+
+.main-column {
+  padding: 40px 48px 56px;
+}
+
+.brand h1,
+.hero h2 {
+  margin: 0;
+  line-height: 1.05;
+}
+
+.brand h1 {
+  font-size: clamp(2.4rem, 4vw, 3.6rem);
+  letter-spacing: -0.03em;
+}
+
+.hero h2 {
+  font-size: clamp(2rem, 4.4vw, 4.5rem);
+  max-width: 12ch;
+}
+
+.eyebrow {
+  margin: 0 0 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 0.72rem;
+  color: var(--ink-soft);
+}
+
+.lede,
+.hero p,
+.small-copy,
+.status-note,
+.guardrail-list,
+#direct-answer,
+#plain-english,
+#next-steps,
+#limitations,
+#sources-list {
+  font-family: "Avenir Next", "Segoe UI", sans-serif;
+  line-height: 1.6;
+}
+
+#direct-answer,
+#plain-english,
+#next-steps,
+#limitations {
+  white-space: pre-line;
+}
+
+.panel,
+.chat-panel,
+.answer-block,
+.hero {
+  background: rgba(255, 255, 255, 0.86);
+  border: 1px solid rgba(13, 36, 56, 0.08);
+  border-radius: 22px;
+  box-shadow: var(--shadow);
+}
+
+.panel {
+  padding: 20px;
+  margin-top: 20px;
+}
+
+.panel h2,
+.answer-block h3 {
+  margin: 0 0 12px;
+  font-size: 1rem;
+}
+
+.hero {
+  padding: 34px;
+  margin-bottom: 24px;
+  position: relative;
+  overflow: hidden;
+}
+
+.hero::after {
+  content: "";
+  position: absolute;
+  inset: auto -60px -80px auto;
+  width: 220px;
+  height: 220px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, rgba(189, 90, 50, 0.22), rgba(118, 184, 201, 0.3));
+}
+
+.chat-panel {
+  padding: 24px;
+}
+
+.form-label {
+  display: block;
+  margin-bottom: 10px;
+  font-family: "Avenir Next", "Segoe UI", sans-serif;
+  font-weight: 600;
+}
+
+textarea,
+input[type="file"] {
+  width: 100%;
+  border-radius: 16px;
+  border: 1px solid rgba(13, 36, 56, 0.15);
+  padding: 16px;
+  font: inherit;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--ink);
+}
+
+textarea {
+  min-height: 150px;
+  resize: vertical;
+  margin-bottom: 14px;
+}
+
+.primary-button,
+.secondary-button {
+  border: 0;
+  border-radius: 999px;
+  padding: 13px 18px;
+  cursor: pointer;
+  font-family: "Avenir Next", "Segoe UI", sans-serif;
+  font-weight: 700;
+  transition: transform 140ms ease, opacity 140ms ease;
+}
+
+.primary-button:hover,
+.secondary-button:hover {
+  transform: translateY(-1px);
+}
+
+.primary-button {
+  background: linear-gradient(135deg, var(--ink), #18486b);
+  color: var(--white);
+}
+
+.secondary-button {
+  background: var(--sky);
+  color: var(--ink);
+  margin-top: 12px;
+}
+
+.answer-panel {
+  margin-top: 24px;
+}
+
+.answer-layout {
+  display: grid;
+  gap: 18px;
+}
+
+.answer-block {
+  padding: 22px;
+}
+
+.empty-state {
+  padding: 42px 24px;
+  text-align: center;
+  color: var(--ink-soft);
+}
+
+.source-card {
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(214, 236, 243, 0.26);
+  margin-bottom: 12px;
+}
+
+.source-title {
+  margin: 0 0 8px;
+  font-family: "Avenir Next", "Segoe UI", sans-serif;
+  font-weight: 700;
+}
+
+.source-meta {
+  margin: 0 0 8px;
+  color: var(--ink-soft);
+  font-size: 0.95rem;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0 0 16px;
+}
+
+.stats-grid div {
+  padding: 14px;
+  border-radius: 16px;
+  background: rgba(214, 236, 243, 0.28);
+}
+
+.stats-grid dt {
+  font-family: "Avenir Next", "Segoe UI", sans-serif;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+}
+
+.stats-grid dd {
+  margin: 6px 0 0;
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.guardrail-list {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.caution {
+  border-color: rgba(189, 90, 50, 0.18);
+}
+
+.hidden {
+  display: none;
+}
+
+@media (max-width: 960px) {
+  .page-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .main-column {
+    padding: 24px 18px 48px;
+  }
+}

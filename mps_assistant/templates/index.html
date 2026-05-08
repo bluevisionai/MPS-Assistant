@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{ app_name }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='styles.css') }}" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <p class="eyebrow">Restricted-source assistant</p>
+          <h1>{{ app_name }}</h1>
+          <p class="lede">
+            Answers come only from the official MPS South Africa site, its downloadable resources, and uploaded documents.
+          </p>
+        </div>
+
+        <section class="panel">
+          <h2>Knowledge Base</h2>
+          <dl class="stats-grid" id="stats-grid">
+            <div>
+              <dt>Sources</dt>
+              <dd id="source-count">{{ status.source_count }}</dd>
+            </div>
+            <div>
+              <dt>Chunks</dt>
+              <dd id="chunk-count">{{ status.chunk_count }}</dd>
+            </div>
+            <div>
+              <dt>Refreshing</dt>
+              <dd id="refresh-flag">{{ "Yes" if status.refresh_in_progress else "No" }}</dd>
+            </div>
+            <div>
+              <dt>Last refresh</dt>
+              <dd id="last-refresh">{{ status.last_refresh_completed_at or "Not yet" }}</dd>
+            </div>
+          </dl>
+          <p class="seed-link">
+            Seed site:
+            <a href="{{ seed_url }}" target="_blank" rel="noreferrer">{{ seed_url }}</a>
+          </p>
+          <button class="primary-button" id="refresh-button" type="button">Refresh official site</button>
+          <p class="status-note" id="refresh-note"></p>
+        </section>
+
+        <section class="panel">
+          <h2>Upload extra files</h2>
+          <p class="small-copy">Accepted: PDF, DOCX, XLSX, CSV, TXT, PPTX, and similar document formats.</p>
+          <input id="upload-input" type="file" multiple />
+          <button class="secondary-button" id="upload-button" type="button">Ingest uploaded files</button>
+          <p class="status-note" id="upload-note"></p>
+        </section>
+
+        <section class="panel caution">
+          <h2>Guardrails</h2>
+          <ul class="guardrail-list">
+            <li>No general knowledge answers.</li>
+            <li>No unofficial sources.</li>
+            <li>No invented rules, fees, dates, benefits, or cover terms.</li>
+            <li>High-stakes topics stay conservative and cite sources.</li>
+          </ul>
+        </section>
+      </aside>
+
+      <main class="main-column">
+        <section class="hero">
+          <p class="eyebrow">Official-source Q&amp;A</p>
+          <h2>Ask about MPS South Africa documents, forms, FAQs, policies, and membership resources.</h2>
+          <p>
+            The app searches the local MPS knowledge base first, retrieves supporting passages, and refuses when the sources do not support a confident answer.
+          </p>
+        </section>
+
+        <section class="chat-panel">
+          <form id="chat-form">
+            <label for="question-input" class="form-label">Your question</label>
+            <textarea
+              id="question-input"
+              name="question"
+              rows="5"
+              placeholder="Example: What does MPS say I should do if I receive a complaint?"
+            ></textarea>
+            <button class="primary-button" type="submit">Ask MPS Assistant</button>
+          </form>
+        </section>
+
+        <section class="answer-panel" id="answer-panel">
+          <div class="empty-state" id="empty-state">
+            <h3>No answer yet</h3>
+            <p>Ask a question to see the direct answer, supporting MPS sources, plain-English explanation, and practical next steps.</p>
+          </div>
+
+          <div class="answer-layout hidden" id="answer-layout">
+            <article class="answer-block">
+              <h3>Direct answer</h3>
+              <div id="direct-answer"></div>
+            </article>
+
+            <article class="answer-block">
+              <h3>MPS source</h3>
+              <div id="sources-list"></div>
+            </article>
+
+            <article class="answer-block">
+              <h3>Plain English</h3>
+              <div id="plain-english"></div>
+            </article>
+
+            <article class="answer-block">
+              <h3>Practical next steps</h3>
+              <div id="next-steps"></div>
+            </article>
+
+            <article class="answer-block">
+              <h3>Limitations or what to confirm with MPS</h3>
+              <div id="limitations"></div>
+            </article>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script>
+      const chatForm = document.getElementById("chat-form");
+      const questionInput = document.getElementById("question-input");
+      const answerLayout = document.getElementById("answer-layout");
+      const emptyState = document.getElementById("empty-state");
+      const refreshButton = document.getElementById("refresh-button");
+      const uploadButton = document.getElementById("upload-button");
+      const uploadInput = document.getElementById("upload-input");
+
+      function setText(id, text) {
+        document.getElementById(id).textContent = text || "";
+      }
+
+      function renderSources(sources) {
+        const container = document.getElementById("sources-list");
+        container.innerHTML = "";
+        if (!sources.length) {
+          container.textContent = "No supporting source passages were available.";
+          return;
+        }
+
+        for (const source of sources) {
+          const card = document.createElement("div");
+          card.className = "source-card";
+
+          const heading = document.createElement("p");
+          heading.className = "source-title";
+          heading.textContent = `[${source.number}] ${source.document_title || source.page_title || source.file_name || "MPS source"}`;
+          card.appendChild(heading);
+
+          const meta = document.createElement("p");
+          meta.className = "source-meta";
+          meta.textContent = [
+            source.section_heading ? `Section: ${source.section_heading}` : "",
+            source.page_number ? `Page: ${source.page_number}` : "",
+            source.file_name ? `File: ${source.file_name}` : "",
+          ].filter(Boolean).join(" | ");
+          card.appendChild(meta);
+
+          if (source.url) {
+            const link = document.createElement("a");
+            link.href = source.url;
+            link.target = "_blank";
+            link.rel = "noreferrer";
+            link.textContent = source.url;
+            card.appendChild(link);
+          }
+          container.appendChild(card);
+        }
+      }
+
+      async function refreshStatus() {
+        const response = await fetch("/api/status");
+        const status = await response.json();
+        setText("source-count", status.source_count);
+        setText("chunk-count", status.chunk_count);
+        setText("refresh-flag", status.refresh_in_progress ? "Yes" : "No");
+        setText("last-refresh", status.last_refresh_completed_at || "Not yet");
+      }
+
+      chatForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const question = questionInput.value.trim();
+        if (!question) {
+          return;
+        }
+
+        setText("direct-answer", "Searching the MPS knowledge base...");
+        setText("plain-english", "");
+        setText("next-steps", "");
+        setText("limitations", "");
+        renderSources([]);
+        emptyState.classList.add("hidden");
+        answerLayout.classList.remove("hidden");
+
+        const response = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ question }),
+        });
+
+        if (!response.ok) {
+          const error = await response.json();
+          setText("direct-answer", error.detail || "The request failed.");
+          return;
+        }
+
+        const data = await response.json();
+        setText("direct-answer", data.direct_answer);
+        setText("plain-english", data.plain_english);
+        setText("next-steps", data.practical_next_steps);
+        setText("limitations", data.limitations);
+        renderSources(data.sources || []);
+      });
+
+      refreshButton.addEventListener("click", async () => {
+        const note = document.getElementById("refresh-note");
+        note.textContent = "Starting refresh...";
+        const response = await fetch("/api/refresh", { method: "POST" });
+        const data = await response.json();
+        note.textContent = data.message;
+        await refreshStatus();
+      });
+
+      uploadButton.addEventListener("click", async () => {
+        const note = document.getElementById("upload-note");
+        if (!uploadInput.files.length) {
+          note.textContent = "Select one or more files first.";
+          return;
+        }
+
+        note.textContent = "Uploading and indexing files...";
+        const formData = new FormData();
+        for (const file of uploadInput.files) {
+          formData.append("files", file);
+        }
+
+        const response = await fetch("/api/upload", {
+          method: "POST",
+          body: formData,
+        });
+
+        const data = await response.json();
+        if (!response.ok) {
+          note.textContent = data.detail || "Upload failed.";
+          return;
+        }
+        note.textContent = `Indexed ${data.ingested_files} file(s).`;
+        uploadInput.value = "";
+        await refreshStatus();
+      });
+
+      refreshStatus();
+    </script>
+  </body>
+  </html>
