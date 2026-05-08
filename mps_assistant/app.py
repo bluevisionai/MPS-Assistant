@@ -118,6 +118,13 @@ async def admin_login_page(request: Request) -> HTMLResponse:
     )
 
 
+@app.get("/admin")
+async def admin_root(request: Request) -> RedirectResponse:
+    if _is_admin_authenticated(request):
+        return RedirectResponse(url="/admin/dashboard", status_code=http_status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url="/admin/login", status_code=http_status.HTTP_303_SEE_OTHER)
+
+
 @app.post("/admin/login", response_class=HTMLResponse)
 async def admin_login_submit(
     request: Request,
