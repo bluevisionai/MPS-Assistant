@@ -59,6 +59,13 @@ data/
 *.sqlite
 *.sqlite3
 
+# Deployment data bundle (tracked snapshot used by CI/CD deploys)
+!deploy_data/
+deploy_data/*
+!deploy_data/.gitkeep
+!deploy_data/*.tgz
+!deploy_data/manifest.json
+
 # Azure and App Service local artifacts
 .azure/deployment-plan.md
 .python_packages/

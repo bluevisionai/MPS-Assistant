@@ -82,6 +82,22 @@ Normal question answering works from the local knowledge base. The chat UI no lo
 - Downloaded website files: `data/raw/`
 - Uploaded files: `data/uploads/`
 
+## Deploying current loaded data
+
+CI/CD deploys from repository contents, so local `data/` is not included directly.
+
+To deploy the currently loaded data with your next code deploy:
+
+1. Export a deployment snapshot:
+
+```bash
+bash scripts/export_deploy_data.sh
+```
+
+2. Commit and push the generated `deploy_data/mps_data_bundle.tgz` and `deploy_data/manifest.json`.
+
+At startup, `startup.sh` automatically hydrates `DATA_DIR` from `deploy_data/mps_data_bundle.tgz` when the bundle exists.
+
 ## CLI
 
 Refresh the official MPS site from the terminal:
