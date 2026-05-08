@@ -87,6 +87,8 @@ function defaultQualification() {
 function defaultApplicationState() {
   return {
     currentStep: 0,
+    workflowState: "active",
+    cardVisible: false,
     membershipCategory: "",
     verified: false,
     verificationMethod: "email",
@@ -233,6 +235,10 @@ function normalizeApplicationState(value) {
     selectedPrice: state.selectedPrice || null,
     rateCard: state.rateCard || null,
     submitResult: state.submitResult || null,
+    workflowState: ["active", "paused", "stopped"].includes(state.workflowState)
+      ? state.workflowState
+      : defaults.workflowState,
+    cardVisible: typeof state.cardVisible === "boolean" ? state.cardVisible : defaults.cardVisible,
   }
 }
 
@@ -809,6 +815,8 @@ function createStarterChips() {
     if (uiState.applicationConversation.length === 0) {
       seedApplicationConversation()
     }
+    uiState.application.workflowState = "active"
+    uiState.application.cardVisible = true
     uiState.application.currentStep = 0
     saveUiState()
     renderApp("end")
@@ -882,6 +890,12 @@ async function sendQuestion(prefilledQuestion) {
 
   questionInput.value = ""
   autoResizeComposer()
+
+  if (handleApplicationPromptCommand(question)) {
+    questionInput.focus()
+    return
+  }
+
   showTyping("processing ...")
   setKnowledgePendingState(true)
 
@@ -929,6 +943,86 @@ async function sendQuestion(prefilledQuestion) {
     renderApp("latest")
     questionInput.focus()
   }
+}
+
+function detectApplicationPromptCommand(question) {
+  const text = String(question || "").trim().toLowerCase()
+  if (!text) {
+    return null
+  }
+
+  const mentionsApplication = /(application|membership|onboarding|journey)/.test(text)
+  if (mentionsApplication && /(pause|hold|suspend)/.test(text)) {
+    return "pause"
+  }
+  if (mentionsApplication && /(stop|cancel|end|quit)/.test(text)) {
+    return "stop"
+  }
+  if (
+    (mentionsApplication && /(resume|continue|return|back|pickup|pick up)/.test(text)) ||
+    /^(resume|continue)\s*(application|membership|onboarding|journey)?$/.test(text) ||
+    /(start|open)\s+(the\s+)?(application|membership\s+application)/.test(text)
+  ) {
+    return "resume"
+  }
+
+  return null
+}
+
+function hasSavedApplicationProgress() {
+  const app = applicationState()
+  return Boolean(
+    app.currentStep > 0 ||
+      app.membershipCategory ||
+      app.verified ||
+      app.selectedPrice ||
+      app.submitResult ||
+      Object.keys(app.underwritingAnswers || {}).length
+  )
+}
+
+function handleApplicationPromptCommand(question) {
+  const command = detectApplicationPromptCommand(question)
+  if (!command) {
+    return false
+  }
+
+  const app = applicationState()
+  clearApplicationFeedback()
+
+  if (command === "pause") {
+    app.workflowState = "paused"
+    app.cardVisible = false
+    uiState.knowledgeConversation.push({
+      role: "assistant",
+      content:
+        "Application paused. You can ask general MPS questions now. Type 'resume application' when you want to continue.",
+    })
+  } else if (command === "stop") {
+    app.workflowState = "stopped"
+    app.cardVisible = false
+    uiState.knowledgeConversation.push({
+      role: "assistant",
+      content:
+        "Application stopped for now. Your progress is saved. Type 'resume application' to continue later.",
+    })
+  } else {
+    app.workflowState = "active"
+    app.cardVisible = true
+    if (uiState.applicationConversation.length === 0) {
+      seedApplicationConversation()
+    }
+    uiState.knowledgeConversation.push({
+      role: "assistant",
+      content: hasSavedApplicationProgress()
+        ? "Resuming your existing membership application from your saved step."
+        : "Starting the membership application journey now.",
+    })
+  }
+
+  saveUiState()
+  renderApp("latest")
+  return true
 }
 
 function buildHandoffConversationPayload() {
@@ -1201,8 +1295,12 @@ function renderApp(scrollMode = "end") {
       renderTextMessage(message, "")
     }
     
-    // Show current application step if in progress
-    if (uiState.application.currentStep > 0 && uiState.application.currentStep < APPLICATION_STEP_LABELS.length) {
+    // Show application card when journey is active and visible.
+    if (
+      uiState.application.cardVisible &&
+      uiState.application.workflowState === "active" &&
+      uiState.application.currentStep < APPLICATION_STEP_LABELS.length
+    ) {
       renderApplicationCardMessage()
     }
     
@@ -1228,6 +1326,8 @@ function renderApp(scrollMode = "end") {
 function pushApplicationMessages(userText, assistantText, nextStep) {
   const app = applicationState()
   clearApplicationFeedback()
+  app.workflowState = "active"
+  app.cardVisible = true
   if (userText) {
     uiState.applicationConversation.push({ role: "user", content: userText })
   }
@@ -2653,6 +2753,7 @@ async function handleApplicationSubmit() {
 
 function resetApplicationJourney() {
   uiState.application = defaultApplicationState()
+  uiState.application.cardVisible = false
   uiState.applicationConversation = []
   seedApplicationConversation()
   saveUiState()
