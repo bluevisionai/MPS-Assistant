@@ -146,11 +146,11 @@ input {
 }
 
 .brand-logo {
-  width: 114px;
+  width: 122px;
   height: auto;
   display: block;
-  padding: 10px 12px;
-  border-radius: 18px;
+  padding: 12px 14px 16px 16px;
+  border-radius: 14px;
   background: rgba(255, 255, 255, 0.98);
   flex-shrink: 0;
 }
@@ -1835,20 +1835,22 @@ input[type="file"]:focus {
 
 @media (max-width: 640px) {
   .experience-shell {
-    padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+    padding: 0;
   }
 
   .chatbox-shell {
     position: fixed;
-    left: max(12px, env(safe-area-inset-left));
-    right: max(12px, env(safe-area-inset-right));
-    bottom: max(12px, env(safe-area-inset-bottom));
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
   }
 
   .chatbox-panel {
-    width: 100%;
-    height: min(calc(100dvh - 24px), 860px);
-    border-radius: 26px;
+    width: 100vw;
+    height: 100dvh;
+    border-radius: 0;
+    border: 0;
   }
 
   .chatbox-header {
@@ -1864,7 +1866,9 @@ input[type="file"]:focus {
   }
 
   .brand-logo {
-    width: 82px;
+    width: 90px;
+    padding: 10px 12px 14px 14px;
+    border-radius: 12px;
   }
 
   .brand-copy h1 {
@@ -2015,22 +2019,25 @@ input[type="file"]:focus {
 
 @media (max-width: 420px) {
   .chatbox-panel {
-    height: min(calc(100dvh - 16px), 860px);
-    border-radius: 22px;
+    height: 100dvh;
+    border-radius: 0;
   }
 
   .chatbox-shell {
-    left: max(8px, env(safe-area-inset-left));
-    right: max(8px, env(safe-area-inset-right));
-    bottom: max(8px, env(safe-area-inset-bottom));
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
   }
 
   .experience-shell {
-    padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+    padding: 0;
   }
 
   .brand-logo {
-    width: 72px;
+    width: 80px;
+    padding: 9px 10px 12px 12px;
+    border-radius: 10px;
   }
 
   .brand-copy h1 {

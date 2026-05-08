@@ -55,6 +55,10 @@ const modeCaption = document.getElementById("mode-caption")
 const composerNote = document.getElementById("composer-note")
 const typingText = typingIndicator.querySelector("p")
 
+function isAnalyticsUiEnabled() {
+  return Boolean(analyticsDashboard && toggleAnalytics)
+}
+
 let knowledgePending = false
 let applicationPending = false
 let onboardingConfig = null
@@ -67,6 +71,9 @@ let analyticsState = {
 }
 
 let uiState = loadUiState()
+if (!isAnalyticsUiEnabled()) {
+  uiState.dashboardOpen = false
+}
 
 function defaultQualification() {
   return {
@@ -393,6 +400,10 @@ function renderAnalyticsDashboard() {
 }
 
 async function loadAnalytics(force = false) {
+  if (!isAnalyticsUiEnabled()) {
+    return
+  }
+
   const isFresh = Date.now() - analyticsState.lastLoadedAt < 12000
   if (!force && (analyticsState.loading || isFresh)) {
     return
@@ -2726,7 +2737,7 @@ chatForm.addEventListener("submit", async (event) => {
 
 async function initializeUi() {
   await restoreConversationFromServer()
-  if (uiState.dashboardOpen) {
+  if (isAnalyticsUiEnabled() && uiState.dashboardOpen) {
     await loadAnalytics(true)
   }
   renderApp(uiState.activeMode === "unified" || (uiState.activeMode === "knowledge" && uiState.knowledgeConversation.length) ? "end" : "top")
@@ -2734,7 +2745,7 @@ async function initializeUi() {
 }
 
 setInterval(() => {
-  if (uiState.dashboardOpen) {
+  if (isAnalyticsUiEnabled() && uiState.dashboardOpen) {
     void loadAnalytics()
   }
 }, 15000)

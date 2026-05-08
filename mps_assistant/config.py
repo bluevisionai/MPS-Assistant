@@ -39,7 +39,10 @@ class Settings(BaseSettings):
     onboarding_timeout_seconds: int = 20
     admin_dashboard_username: str = "admin"
     admin_dashboard_password: str = "change-me"
-    admin_session_secret: str = "change-me-session-secret"
+    admin_session_secret: str = ""
+    admin_login_max_attempts: int = 5
+    admin_login_window_seconds: int = 900
+    admin_login_lockout_seconds: int = 900
     data_dir: Path = Field(default_factory=_default_data_root)
     database_path: Path = Field(default_factory=lambda: _default_data_root() / "mps_assistant.db")
     raw_download_dir: Path = Field(default_factory=lambda: _default_data_root() / "raw")
@@ -52,6 +55,8 @@ class Settings(BaseSettings):
     refresh_timezone: str = "Africa/Johannesburg"
     refresh_hour_local: int = 0
     refresh_minute_local: int = 0
+    refresh_request_cooldown_seconds: int = 300
+    refresh_lock_ttl_seconds: int = 5400
     enable_scheduler: bool = Field(default_factory=lambda: not _is_app_service())
     auto_refresh_on_startup: bool = True
     sqlite_journal_mode: str = Field(default_factory=_default_sqlite_journal_mode)
@@ -60,6 +65,7 @@ class Settings(BaseSettings):
     render_timeout_seconds: int = 35
     user_agent: str = "MPS Assistant/1.0 (+local knowledge base crawler)"
     chrome_binary_path: str = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+    proxy_trusted_hosts: str = "127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
     retrieval_top_k: int = 6
     lexical_top_k: int = 12
     semantic_top_k: int = 12
@@ -110,9 +116,22 @@ class Settings(BaseSettings):
         for path in (self.data_dir, self.raw_download_dir, self.upload_dir, self.database_path.parent):
             path.mkdir(parents=True, exist_ok=True)
 
+    def validate_security(self) -> None:
+        secret = (self.admin_session_secret or "").strip()
+        insecure_values = {"", "change-me-session-secret", "change-me", "default", "secret"}
+        if secret in insecure_values or len(secret) < 32:
+            raise ValueError(
+                "ADMIN_SESSION_SECRET must be set to a strong value (at least 32 characters)."
+            )
+
+    def proxy_trusted_hosts_list(self) -> List[str]:
+        hosts = [item.strip() for item in self.proxy_trusted_hosts.split(",") if item.strip()]
+        return hosts or ["127.0.0.1", "::1"]
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     settings = Settings()
+    settings.validate_security()
     settings.ensure_directories()
     return settings

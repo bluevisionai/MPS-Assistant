@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence
 
@@ -160,6 +161,14 @@ class Database:
 
                 CREATE INDEX IF NOT EXISTS idx_handoff_requests_session_id ON handoff_requests(session_id);
                 CREATE INDEX IF NOT EXISTS idx_handoff_requests_created_at ON handoff_requests(created_at);
+
+                CREATE TABLE IF NOT EXISTS admin_login_limiter (
+                    identifier TEXT PRIMARY KEY,
+                    failure_count INTEGER NOT NULL DEFAULT 0,
+                    first_failure_at TEXT,
+                    blocked_until TEXT,
+                    updated_at TEXT NOT NULL
+                );
                 """
             )
 
@@ -762,6 +771,170 @@ class Database:
             "total_gap_events": int(gap_summary["total_gap_events"] or 0),
             "unresolved_gap_events": int(gap_summary["unresolved_gap_events"] or 0),
         }
+
+    def try_acquire_refresh_cooldown(self, key: str, cooldown_seconds: int) -> tuple[bool, int]:
+        cooldown_seconds = max(0, int(cooldown_seconds))
+        if cooldown_seconds == 0:
+            return True, 0
+
+        now = datetime.now(timezone.utc)
+        with self.connect() as conn:
+            row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+            if row is not None:
+                try:
+                    previous = datetime.fromisoformat(str(row["value"]))
+                    elapsed = (now - previous).total_seconds()
+                    remaining = cooldown_seconds - elapsed
+                    if remaining > 0:
+                        return False, int(math.ceil(remaining))
+                except ValueError:
+                    # Ignore malformed stored values and reset the cooldown marker.
+                    pass
+
+            self.set_meta_with_connection(conn, key, now.isoformat())
+            return True, 0
+
+    def try_acquire_refresh_lock(self, lock_key: str, ttl_seconds: int) -> bool:
+        ttl_seconds = max(30, int(ttl_seconds))
+        now = datetime.now(timezone.utc)
+
+        with self.connect() as conn:
+            # Serialize lock acquisition attempts across workers/processes.
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT value FROM meta WHERE key = ?", (lock_key,)).fetchone()
+
+            if row is not None:
+                try:
+                    expires_at = datetime.fromisoformat(str(row["value"]))
+                except ValueError:
+                    expires_at = now
+
+                if expires_at > now:
+                    return False
+
+            new_expiry = now + timedelta(seconds=ttl_seconds)
+            self.set_meta_with_connection(conn, lock_key, new_expiry.isoformat())
+            return True
+
+    def release_refresh_lock(self, lock_key: str) -> None:
+        with self.connect() as conn:
+            conn.execute("DELETE FROM meta WHERE key = ?", (lock_key,))
+
+    def is_refresh_lock_active(self, lock_key: str) -> bool:
+        with self.connect() as conn:
+            row = conn.execute("SELECT value FROM meta WHERE key = ?", (lock_key,)).fetchone()
+
+        if row is None:
+            return False
+
+        try:
+            expires_at = datetime.fromisoformat(str(row["value"]))
+        except ValueError:
+            return False
+
+        return expires_at > datetime.now(timezone.utc)
+
+    def admin_login_retry_after_seconds(self, identifier: str) -> int:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT blocked_until FROM admin_login_limiter WHERE identifier = ?",
+                (identifier,),
+            ).fetchone()
+
+        if row is None or not row["blocked_until"]:
+            return 0
+
+        try:
+            blocked_until = datetime.fromisoformat(str(row["blocked_until"]))
+        except ValueError:
+            return 0
+
+        remaining = (blocked_until - datetime.now(timezone.utc)).total_seconds()
+        return int(math.ceil(remaining)) if remaining > 0 else 0
+
+    def record_admin_login_failure(
+        self,
+        identifier: str,
+        max_attempts: int,
+        window_seconds: int,
+        lockout_seconds: int,
+    ) -> int:
+        max_attempts = max(1, int(max_attempts))
+        window_seconds = max(1, int(window_seconds))
+        lockout_seconds = max(1, int(lockout_seconds))
+        now = datetime.now(timezone.utc)
+
+        with self.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                """
+                SELECT failure_count, first_failure_at, blocked_until
+                FROM admin_login_limiter
+                WHERE identifier = ?
+                """,
+                (identifier,),
+            ).fetchone()
+
+            failure_count = 0
+            first_failure_at = now
+            blocked_until = None
+
+            if row is not None:
+                try:
+                    blocked_until = datetime.fromisoformat(str(row["blocked_until"])) if row["blocked_until"] else None
+                except ValueError:
+                    blocked_until = None
+
+                if blocked_until and blocked_until > now:
+                    remaining = (blocked_until - now).total_seconds()
+                    return int(math.ceil(remaining))
+
+                try:
+                    first_failure_at = (
+                        datetime.fromisoformat(str(row["first_failure_at"])) if row["first_failure_at"] else now
+                    )
+                except ValueError:
+                    first_failure_at = now
+
+                if (now - first_failure_at).total_seconds() > window_seconds:
+                    failure_count = 0
+                    first_failure_at = now
+                else:
+                    failure_count = int(row["failure_count"] or 0)
+
+            failure_count += 1
+
+            new_blocked_until = None
+            retry_after = 0
+            if failure_count >= max_attempts:
+                new_blocked_until = now + timedelta(seconds=lockout_seconds)
+                retry_after = lockout_seconds
+
+            conn.execute(
+                """
+                INSERT INTO admin_login_limiter(
+                    identifier, failure_count, first_failure_at, blocked_until, updated_at
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(identifier) DO UPDATE SET
+                    failure_count = excluded.failure_count,
+                    first_failure_at = excluded.first_failure_at,
+                    blocked_until = excluded.blocked_until,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    identifier,
+                    failure_count,
+                    first_failure_at.isoformat(),
+                    new_blocked_until.isoformat() if new_blocked_until else None,
+                    now.isoformat(),
+                ),
+            )
+
+            return retry_after
+
+    def clear_admin_login_failures(self, identifier: str) -> None:
+        with self.connect() as conn:
+            conn.execute("DELETE FROM admin_login_limiter WHERE identifier = ?", (identifier,))
 
 
 def _build_fts_query(query: str) -> str:

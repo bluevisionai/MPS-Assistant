@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List
+from uuid import uuid4
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, status as http_status
@@ -72,7 +73,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
 app.add_middleware(SessionMiddleware, secret_key=settings.admin_session_secret)
-app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=settings.proxy_trusted_hosts_list())
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
 
@@ -123,9 +124,39 @@ async def admin_login_submit(
     username: str = Form(default=""),
     password: str = Form(default=""),
 ) -> HTMLResponse:
+    client_host = (request.client.host if request.client else "unknown") or "unknown"
+    limiter_key = f"{client_host}:{username.strip().lower()}"
+
+    retry_after = database.admin_login_retry_after_seconds(limiter_key)
+    if retry_after > 0:
+        return templates.TemplateResponse(
+            request,
+            "admin_login.html",
+            {
+                "request": request,
+                "app_name": settings.app_name,
+                "error": f"Too many failed attempts. Try again in {retry_after}s.",
+            },
+            status_code=http_status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+
     if username == settings.admin_dashboard_username and password == settings.admin_dashboard_password:
+        database.clear_admin_login_failures(limiter_key)
         request.session["is_admin_authenticated"] = True
         return RedirectResponse(url="/admin/dashboard", status_code=http_status.HTTP_303_SEE_OTHER)
+
+    retry_after = database.record_admin_login_failure(
+        identifier=limiter_key,
+        max_attempts=settings.admin_login_max_attempts,
+        window_seconds=settings.admin_login_window_seconds,
+        lockout_seconds=settings.admin_login_lockout_seconds,
+    )
+
+    error_message = "Invalid username or password."
+    status_code = http_status.HTTP_401_UNAUTHORIZED
+    if retry_after > 0:
+        error_message = f"Too many failed attempts. Try again in {retry_after}s."
+        status_code = http_status.HTTP_429_TOO_MANY_REQUESTS
 
     return templates.TemplateResponse(
         request,
@@ -133,9 +164,9 @@ async def admin_login_submit(
         {
             "request": request,
             "app_name": settings.app_name,
-            "error": "Invalid username or password.",
+            "error": error_message,
         },
-        status_code=http_status.HTTP_401_UNAUTHORIZED,
+        status_code=status_code,
     )
 
 
@@ -373,7 +404,18 @@ async def onboarding_submit(request: OnboardingSubmissionRequest) -> OnboardingA
 
 
 @app.post("/api/refresh", response_model=RefreshResponse)
-async def refresh() -> RefreshResponse:
+async def refresh(request: Request) -> RefreshResponse:
+    _require_admin(request)
+    allowed, retry_after = database.try_acquire_refresh_cooldown(
+        key="manual_refresh_trigger_at",
+        cooldown_seconds=settings.refresh_request_cooldown_seconds,
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=http_status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Refresh is rate limited. Try again in {retry_after}s.",
+        )
+
     started = knowledge_base.start_refresh_background()
     if started:
         return RefreshResponse(started=True, message="Website refresh started.")
@@ -381,20 +423,35 @@ async def refresh() -> RefreshResponse:
 
 
 @app.post("/api/upload", response_model=UploadResponse)
-async def upload(files: List[UploadFile] = File(...)) -> UploadResponse:
+async def upload(request: Request, files: List[UploadFile] = File(...)) -> UploadResponse:
+    _require_admin(request)
+
     if not files:
         raise HTTPException(status_code=400, detail="No files were uploaded.")
 
     ingested_source_keys = []
     for upload_file in files:
-        suffix = Path(upload_file.filename or "").suffix.lower()
+        original_name = Path(upload_file.filename or "uploaded-file").name
+        if original_name in {"", ".", ".."}:
+            original_name = "uploaded-file"
+
+        suffix = Path(original_name).suffix.lower()
         if suffix not in settings.resource_extensions:
             raise HTTPException(status_code=400, detail=f"Unsupported file type: {suffix or 'unknown'}")
 
-        temp_path = settings.upload_dir / f"tmp-{upload_file.filename}"
-        temp_path.write_bytes(await upload_file.read())
-        source_key = knowledge_base.ingest_upload(temp_path, upload_file.filename or "uploaded-file")
-        temp_path.unlink(missing_ok=True)
-        ingested_source_keys.append(source_key)
+        temp_path = settings.upload_dir / f"tmp-{uuid4().hex}{suffix}"
+        try:
+            with temp_path.open("wb") as temp_file:
+                while True:
+                    chunk = await upload_file.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    temp_file.write(chunk)
+
+            source_key = knowledge_base.ingest_upload(temp_path, original_name)
+            ingested_source_keys.append(source_key)
+        finally:
+            temp_path.unlink(missing_ok=True)
+            await upload_file.close()
 
     return UploadResponse(ingested_files=len(ingested_source_keys), source_keys=ingested_source_keys)

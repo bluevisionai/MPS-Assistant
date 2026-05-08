@@ -22,6 +22,24 @@
         <button class="chat-launcher hidden" id="chat-launcher" type="button">Open MPS Assistant</button>
 
         <section class="chatbox-panel" aria-label="MPS Assistant chat window">
+          <header class="chatbox-header">
+            <div class="brand-lockup">
+              <img
+                class="brand-logo"
+                src="{{ url_for('static', path='brand/mps-logo.png') }}"
+                alt="Medical Protection logo"
+              />
+              <div class="brand-copy">
+                <h1>{{ app_name }}</h1>
+              </div>
+            </div>
+
+            <div class="header-actions">
+              <button class="icon-button" id="new-chat" type="button">New chat</button>
+              <button class="icon-button" id="toggle-chatbox" type="button" aria-expanded="true">Hide</button>
+            </div>
+          </header>
+
           <div class="chatbox-body">
 
             <section class="analytics-dashboard hidden" id="analytics-dashboard" aria-live="polite"></section>

@@ -24,6 +24,8 @@ from .semantic_intent import SemanticIntentAnalyzer, EnrichedResponseFormulator
 
 
 class KnowledgeBaseService:
+    REFRESH_LOCK_KEY = "refresh_lock_expires_at"
+
     def __init__(self, settings: Settings, database: Database) -> None:
         self.settings = settings
         self.database = database
@@ -47,8 +49,9 @@ class KnowledgeBaseService:
 
     def status(self) -> dict:
         stats = self.database.stats()
+        distributed_refresh_active = self.database.is_refresh_lock_active(self.REFRESH_LOCK_KEY)
         return {
-            "refresh_in_progress": self.refresh_in_progress,
+            "refresh_in_progress": self.refresh_in_progress or distributed_refresh_active,
             "last_refresh_started_at": self.last_refresh_started_at or self.database.get_meta("last_refresh_started_at"),
             "last_refresh_completed_at": self.last_refresh_completed_at or self.database.get_meta("last_refresh_completed_at"),
             "last_refresh_error": self.last_refresh_error or self.database.get_meta("last_refresh_error"),
@@ -59,6 +62,8 @@ class KnowledgeBaseService:
     def start_refresh_background(self) -> bool:
         with self.lock:
             if self.refresh_in_progress:
+                return False
+            if not self.database.try_acquire_refresh_lock(self.REFRESH_LOCK_KEY, self.settings.refresh_lock_ttl_seconds):
                 return False
             self.refresh_in_progress = True
             self.last_refresh_started_at = _utc_now()
@@ -730,6 +735,7 @@ class KnowledgeBaseService:
             self.database.set_meta("last_refresh_error", self.last_refresh_error)
         finally:
             self.refresh_in_progress = False
+            self.database.release_refresh_lock(self.REFRESH_LOCK_KEY)
 
     def _store_document(self, document: ExtractedDocument) -> None:
         chunks = chunk_document(document, self.settings)
