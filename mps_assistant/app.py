@@ -7,7 +7,7 @@ from typing import List
 from uuid import uuid4
 
 from apscheduler.schedulers.background import BackgroundScheduler
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, status as http_status
+from fastapi import FastAPI, Form, HTTPException, Request, UploadFile, status as http_status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -423,8 +423,11 @@ async def refresh(request: Request) -> RefreshResponse:
 
 
 @app.post("/api/upload", response_model=UploadResponse)
-async def upload(request: Request, files: List[UploadFile] = File(...)) -> UploadResponse:
+async def upload(request: Request) -> UploadResponse:
     _require_admin(request)
+
+    form = await request.form()
+    files = [item for item in form.getlist("files") if isinstance(item, UploadFile)]
 
     if not files:
         raise HTTPException(status_code=400, detail="No files were uploaded.")
