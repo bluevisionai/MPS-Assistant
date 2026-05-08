@@ -22,28 +22,7 @@
         <button class="chat-launcher hidden" id="chat-launcher" type="button">Open MPS Assistant</button>
 
         <section class="chatbox-panel" aria-label="MPS Assistant chat window">
-          <header class="chatbox-header">
-            <div class="brand-lockup">
-              <img
-                class="brand-logo"
-                src="{{ url_for('static', path='brand/mps-logo.png') }}"
-                alt="Medical Protection logo"
-              />
-              <div class="brand-copy">
-                <h1>{{ app_name }}</h1>
-              </div>
-            </div>
-
-            <div class="header-actions">
-              <button class="icon-button" id="new-chat" type="button">New chat</button>
-              <button class="icon-button" id="toggle-chatbox" type="button" aria-expanded="true">Hide</button>
-            </div>
-          </header>
-
           <div class="chatbox-body">
-            <div class="chatbox-toolbar">
-              <p class="mode-caption" id="mode-caption">Ask questions or progress through your membership application</p>
-            </div>
 
             <section class="analytics-dashboard hidden" id="analytics-dashboard" aria-live="polite"></section>
 
@@ -64,7 +43,7 @@
                   id="question-input"
                   name="question"
                   rows="1"
-                  placeholder="Ask a question about MPS or continue your membership application ..."
+                  placeholder="Ask questions or work through your membership application ..."
                 ></textarea>
                 <button class="primary-button send-button" id="ask-button" type="submit">Send</button>
               </div>

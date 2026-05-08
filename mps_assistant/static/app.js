@@ -435,7 +435,9 @@ function hideTyping() {
 function setChatboxOpen(isOpen) {
   chatboxShell.classList.toggle("is-open", isOpen)
   chatboxShell.classList.toggle("is-collapsed", !isOpen)
-  toggleChatbox.setAttribute("aria-expanded", String(isOpen))
+  if (toggleChatbox) {
+    toggleChatbox.setAttribute("aria-expanded", String(isOpen))
+  }
   chatLauncher.classList.toggle("hidden", isOpen)
   if (isOpen && uiState.activeMode === "knowledge") {
     questionInput.focus()
@@ -465,6 +467,15 @@ function autoResizeComposer() {
   questionInput.style.height = `${Math.min(questionInput.scrollHeight, 180)}px`
 }
 
+function parseInlineMarkdown(text) {
+  return String(text || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*(.+?)\*/g, "<em>$1</em>")
+}
+
 function appendTextBlocks(container, text) {
   const normalized = String(text || "").trim()
   if (!normalized) {
@@ -475,7 +486,7 @@ function appendTextBlocks(container, text) {
   for (const block of blocks) {
     const citationOnly = block.trim().match(/^(?:\[\d+\]\s*)+$/)
     if (citationOnly && container.lastElementChild) {
-      container.lastElementChild.textContent = `${container.lastElementChild.textContent} ${block.trim()}`.trim()
+      container.lastElementChild.innerHTML = `${container.lastElementChild.innerHTML} ${block.trim()}`.trim()
       continue
     }
 
@@ -492,13 +503,17 @@ function appendTextBlocks(container, text) {
     if (allBullets) {
       const list = createElement("ul", "message-list")
       for (const line of lines) {
-        list.appendChild(createElement("li", "", line.slice(2).trim()))
+        const li = createElement("li", "")
+        li.innerHTML = parseInlineMarkdown(line.slice(2).trim())
+        list.appendChild(li)
       }
       container.appendChild(list)
       continue
     }
 
-    container.appendChild(createElement("p", "message-copy", lines.join("\n")))
+    const p = createElement("p", "message-copy")
+    p.innerHTML = parseInlineMarkdown(lines.join("\n"))
+    container.appendChild(p)
   }
 }
 
@@ -652,13 +667,6 @@ function renderAssistantResponse(response, message) {
       )
     )
     appendTextBlocks(section, response.limitations)
-    bubble.appendChild(section)
-  }
-
-  if (response.related_resources && response.related_resources.length) {
-    const section = createElement("section", "message-section")
-    section.appendChild(createElement("p", "message-section-title", "Related resources"))
-    section.appendChild(renderResourceCards(response.related_resources))
     bubble.appendChild(section)
   }
 
@@ -820,7 +828,9 @@ function setKnowledgePendingState(pending) {
   askButton.disabled = pending
   askButton.textContent = pending ? "Processing..." : "Send"
   questionInput.disabled = pending
-  newChatButton.disabled = pending || applicationPending
+  if (newChatButton) {
+    newChatButton.disabled = pending || applicationPending
+  }
   document.querySelectorAll(".starter-chip").forEach((button) => {
     button.disabled = pending
   })
@@ -828,7 +838,9 @@ function setKnowledgePendingState(pending) {
 
 function setApplicationPendingState(pending) {
   applicationPending = pending
-  newChatButton.disabled = pending || knowledgePending
+  if (newChatButton) {
+    newChatButton.disabled = pending || knowledgePending
+  }
 }
 
 async function fetchJson(url, options = {}) {
@@ -1087,11 +1099,15 @@ async function switchMode(mode) {
 
 function updateModeUi() {
   // Unified mode - show all capabilities
-  modeCaption.textContent = "Ask questions or work through your membership application, all in one chat."
+  if (modeCaption) {
+    modeCaption.textContent = ""
+  }
   composerNote.textContent = ""
   composerNote.classList.add("hidden")
   chatForm.classList.remove("composer-hidden")
-  newChatButton.textContent = "New chat"
+  if (newChatButton) {
+    newChatButton.textContent = "New chat"
+  }
 }
 
 function renderKnowledgeConversation(scrollMode) {
@@ -1103,11 +1119,11 @@ function renderKnowledgeConversation(scrollMode) {
       content: KNOWLEDGE_WELCOME,
       isWelcome: true,
     },
-    "MPS Assistant"
+    ""
   )
 
   for (const message of uiState.knowledgeConversation) {
-    renderTextMessage(message, "MPS Assistant")
+    renderTextMessage(message, "")
   }
 
   messagesStage.classList.toggle("is-empty", uiState.knowledgeConversation.length === 0)
@@ -1155,20 +1171,20 @@ function renderApp(scrollMode = "end") {
     renderTextMessage(
       {
         role: "assistant",
-        content: "Welcome to MPS Assistant. Ask me questions about MPS or start working through your membership application.",
+        content: "Welcome. Ask questions about MPS or start working through your membership application.",
         isWelcome: true,
       },
-      "MPS Assistant"
+      ""
     )
     
     // Render knowledge messages
     for (const message of uiState.knowledgeConversation) {
-      renderTextMessage(message, "MPS Assistant")
+      renderTextMessage(message, "")
     }
     
     // Render application messages
     for (const message of uiState.applicationConversation) {
-      renderTextMessage(message, "MPS Assistant")
+      renderTextMessage(message, "")
     }
     
     // Show current application step if in progress
@@ -1191,9 +1207,7 @@ function renderApp(scrollMode = "end") {
       messagesStage.scrollTop = 0
     })
   } else if (scrollMode === "latest") {
-    requestAnimationFrame(() => {
-      messagesStage.scrollTop = messagesStage.scrollHeight
-    })
+    scrollLatestMessageIntoView()
   }
 }
 
@@ -2631,40 +2645,44 @@ function resetApplicationJourney() {
   renderApp("top")
 }
 
-toggleChatbox.addEventListener("click", () => {
-  setChatboxOpen(false)
-})
+if (toggleChatbox) {
+  toggleChatbox.addEventListener("click", () => {
+    setChatboxOpen(false)
+  })
+}
 
 chatLauncher.addEventListener("click", () => {
   setChatboxOpen(true)
 })
 
-newChatButton.addEventListener("click", () => {
-  if (uiState.activeMode === "unified") {
-    // Clear both question history and application progress in unified mode
-    uiState.knowledgeConversation = []
-    uiState.applicationConversation = []
-    uiState.application = defaultApplicationState()
-    saveUiState()
-    renderApp("top")
-    questionInput.value = ""
-    autoResizeComposer()
-    questionInput.focus()
-    return
-  }
-  
-  if (uiState.activeMode === "knowledge") {
-    uiState.knowledgeConversation = []
-    saveUiState()
-    renderApp("top")
-    questionInput.value = ""
-    autoResizeComposer()
-    questionInput.focus()
-    return
-  }
+if (newChatButton) {
+  newChatButton.addEventListener("click", () => {
+    if (uiState.activeMode === "unified") {
+      // Clear both question history and application progress in unified mode
+      uiState.knowledgeConversation = []
+      uiState.applicationConversation = []
+      uiState.application = defaultApplicationState()
+      saveUiState()
+      renderApp("top")
+      questionInput.value = ""
+      autoResizeComposer()
+      questionInput.focus()
+      return
+    }
+    
+    if (uiState.activeMode === "knowledge") {
+      uiState.knowledgeConversation = []
+      saveUiState()
+      renderApp("top")
+      questionInput.value = ""
+      autoResizeComposer()
+      questionInput.focus()
+      return
+    }
 
-  resetApplicationJourney()
-})
+    resetApplicationJourney()
+  })
+}
 
 if (toggleAnalytics) {
   toggleAnalytics.addEventListener("click", () => {
