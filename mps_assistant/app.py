@@ -63,7 +63,7 @@ async def lifespan(_: FastAPI):
             misfire_grace_time=3600,
         )
         scheduler.start()
-    if settings.auto_refresh_on_startup and not knowledge_base.has_content():
+    if settings.auto_refresh_on_startup:
         knowledge_base.start_refresh_background()
     yield
     if scheduler.running:

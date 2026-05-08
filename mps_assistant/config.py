@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     refresh_hour_local: int = 0
     refresh_minute_local: int = 0
     enable_scheduler: bool = Field(default_factory=lambda: not _is_app_service())
-    auto_refresh_on_startup: bool = Field(default_factory=lambda: not _is_app_service())
+    auto_refresh_on_startup: bool = True
     sqlite_journal_mode: str = Field(default_factory=_default_sqlite_journal_mode)
     crawl_max_pages: int = 250
     crawl_timeout_seconds: int = 20
