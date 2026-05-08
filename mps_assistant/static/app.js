@@ -463,10 +463,12 @@ function scrollMessagesToBottom() {
 
 function scrollLatestMessageIntoView() {
   requestAnimationFrame(() => {
-    const rows = messagesList.querySelectorAll(".message-row")
+    // Prefer the newest assistant response so follow-up prompts are visible from the top.
+    const assistantRows = messagesList.querySelectorAll(".message-row-assistant")
+    const rows = assistantRows.length ? assistantRows : messagesList.querySelectorAll(".message-row")
     const lastRow = rows[rows.length - 1]
     if (lastRow) {
-      lastRow.scrollIntoView({ block: "start", behavior: "smooth" })
+      lastRow.scrollIntoView({ block: "start", behavior: "auto" })
       return
     }
     messagesStage.scrollTop = messagesStage.scrollHeight
