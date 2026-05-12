@@ -49,6 +49,9 @@ class RetrievedChunk:
     page_title: Optional[str]
     document_title: Optional[str]
     file_name: Optional[str]
+    origin: Optional[str]
+    source_key: Optional[str]
+    local_path: Optional[str]
     combined_score: float
     lexical_rank: Optional[int]
     semantic_rank: Optional[int]

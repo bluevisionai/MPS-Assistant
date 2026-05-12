@@ -19,6 +19,7 @@ MPS Assistant is a restricted-source retrieval app for Medical Protection South 
   - file name
   - page number where applicable
 - Stores the content in a local SQLite knowledge base with full-text search and optional embeddings
+- Automatically syncs local files under `manual_files/` into the knowledge base as priority material
 - Answers using a strict retrieval-only prompt and refuses when support is insufficient
 - Lets you upload additional documents that become part of the same searchable knowledge base
 - Includes an `Apply in chat` mode for the South Africa onboarding journey, with live quote lookups and draft application submission
@@ -66,6 +67,7 @@ python -m uvicorn mps_assistant.app:app --reload
 
 1. The app searches the local MPS knowledge base.
 2. It retrieves the most relevant chunks using full-text search and embeddings.
+   Local `manual_files/` content is preferred when it overlaps with crawled material.
 3. It sends only those retrieved passages to the model.
 4. It formats the answer into:
    - direct answer
@@ -81,6 +83,9 @@ Normal question answering works from the local knowledge base. The chat UI no lo
 - SQLite DB: `data/mps_assistant.db`
 - Downloaded website files: `data/raw/`
 - Uploaded files: `data/uploads/`
+- Priority manual knowledge: `manual_files/`
+
+Files in `manual_files/` are ingested automatically on startup and on refresh. They are stored as a dedicated priority source so they can override conflicting crawled wording when both cover the same topic.
 
 ## Deploying current loaded data
 

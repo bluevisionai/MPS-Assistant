@@ -1,0 +1,5 @@
+This is really interesting and feels like it has lots of potential – I have had a play around and attached some suggestions.
+ 
+At a high level, we need to make a decision about what this is and why it’s here. Given it will just be for demo purposes initially, I would suggest we pitch as a broad chat service and not explicitly link it to the application process (instead, when you demo it, that can obviously be the type of question you ask).
+ 
+2. However, one issue with this is that the answers are not currently written from MPS’s point of view, but rather from a 3rd person point of view – for example: “MPS says membership is subject to payment of the appropriate subscription, and the cost can vary by membership type/category and profession. What we can confirm from the excerpts: - Student membership is FREE…..” etc. Is there any way to mitigate/influence this?

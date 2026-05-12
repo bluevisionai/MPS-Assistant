@@ -533,6 +533,7 @@ class OnboardingService:
         underwriting_rows = dict(submission.get("underwriting_rows") or {})
         role_id = str(submission.get("membership_category") or "").strip()
         verified = bool(submission.get("verified"))
+        verified = bool(submission.get("verified", False))
         marketing = str(submission.get("marketing") or "").strip().lower()
 
         role = next((item for item in ROLE_OPTIONS if item["id"] == role_id), None)
@@ -540,8 +541,6 @@ class OnboardingService:
             raise ValueError("Choose a membership role before submitting.")
         if not role.get("available_in_chat"):
             raise ValueError("That role still needs to continue on the official MPS join site.")
-        if not verified:
-            raise ValueError("Verify your email address before submitting.")
         if not checkboxes.get("ack"):
             raise ValueError("Accept the acknowledgement and authorisation wording before continuing.")
         if not checkboxes.get("scd"):

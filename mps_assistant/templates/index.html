@@ -19,9 +19,9 @@
 
     <main class="experience-shell">
       <div class="chatbox-shell is-open" id="chatbox-shell">
-        <button class="chat-launcher hidden" id="chat-launcher" type="button">Open MPS Assistant</button>
+        <button class="chat-launcher hidden" id="chat-launcher" type="button">Open Medical Protection chat</button>
 
-        <section class="chatbox-panel" aria-label="MPS Assistant chat window">
+        <section class="chatbox-panel" aria-label="Medical Protection chat window">
           <header class="chatbox-header">
             <div class="brand-lockup">
               <img
@@ -30,7 +30,8 @@
                 alt="Medical Protection logo"
               />
               <div class="brand-copy">
-                <h1>{{ app_name }}</h1>
+                <p class="eyebrow">Medical Protection</p>
+                <h1>Chat assistant</h1>
               </div>
             </div>
 
@@ -46,11 +47,12 @@
 
             <div class="messages-stage" id="messages-stage">
               <div class="messages-list" id="chat-messages" aria-live="polite"></div>
+              <section class="application-stage hidden" id="application-stage" aria-live="polite"></section>
               <div class="typing-indicator hidden" id="typing-indicator">
                 <span class="typing-dot"></span>
                 <span class="typing-dot"></span>
                 <span class="typing-dot"></span>
-                <p>processing ...</p>
+                <p>Thinking...</p>
               </div>
             </div>
 
@@ -61,7 +63,7 @@
                   id="question-input"
                   name="question"
                   rows="1"
-                  placeholder="Ask questions or work through your membership application ..."
+                  placeholder="Type your question here"
                 ></textarea>
                 <button class="primary-button send-button" id="ask-button" type="submit">Send</button>
               </div>

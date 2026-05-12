@@ -282,21 +282,39 @@ class Database:
 
         return source_id
 
-    def mark_missing_website_sources_stale(self, seen_source_keys: Sequence[str]) -> None:
-        if not seen_source_keys:
-            return
-
-        placeholders = ",".join("?" for _ in seen_source_keys)
+    def mark_missing_sources_stale(
+        self,
+        origin: str,
+        seen_source_keys: Sequence[str],
+        *,
+        stale_all_if_empty: bool = False,
+    ) -> None:
         with self.connect() as conn:
-            conn.execute(
-                f"""
-                UPDATE sources
-                SET status = 'stale'
-                WHERE origin = 'website' AND source_key NOT IN ({placeholders})
-                """,
-                tuple(seen_source_keys),
-            )
+            if seen_source_keys:
+                placeholders = ",".join("?" for _ in seen_source_keys)
+                conn.execute(
+                    f"""
+                    UPDATE sources
+                    SET status = 'stale'
+                    WHERE origin = ? AND source_key NOT IN ({placeholders})
+                    """,
+                    (origin, *tuple(seen_source_keys)),
+                )
+            elif stale_all_if_empty:
+                conn.execute(
+                    """
+                    UPDATE sources
+                    SET status = 'stale'
+                    WHERE origin = ?
+                    """,
+                    (origin,),
+                )
+            else:
+                return
             self.set_meta_with_connection(conn, "kb_version", _utc_now())
+
+    def mark_missing_website_sources_stale(self, seen_source_keys: Sequence[str]) -> None:
+        self.mark_missing_sources_stale("website", seen_source_keys)
 
     def set_meta(self, key: str, value: str) -> None:
         with self.connect() as conn:
@@ -349,6 +367,9 @@ class Database:
                     c.text,
                     c.heading,
                     c.page_number,
+                    s.origin,
+                    s.source_key,
+                    s.local_path,
                     s.url,
                     s.page_title,
                     s.document_title,
@@ -368,6 +389,9 @@ class Database:
                 text=str(row["text"]),
                 heading=row["heading"],
                 page_number=row["page_number"],
+                origin=row["origin"],
+                source_key=row["source_key"],
+                local_path=row["local_path"],
                 url=row["url"],
                 page_title=row["page_title"],
                 document_title=row["document_title"],
@@ -391,6 +415,9 @@ class Database:
                     c.text,
                     c.heading,
                     c.page_number,
+                    s.origin,
+                    s.source_key,
+                    s.local_path,
                     s.url,
                     s.page_title,
                     s.document_title,

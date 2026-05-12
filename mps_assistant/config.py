@@ -27,7 +27,7 @@ def _default_sqlite_journal_mode() -> str:
 
 
 class Settings(BaseSettings):
-    app_name: str = "MPS Assistant"
+    app_name: str = "Medical Protection chat service"
     seed_url: str = "https://www.medicalprotection.org/southafrica"
     allowed_domain: str = "medicalprotection.org"
     onboarding_portal_url: str = "https://mps-web-d22mja-h4awazgqdeheb8ax.z02.azurefd.net/mps/za/login"
@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     database_path: Path = Field(default_factory=lambda: _default_data_root() / "mps_assistant.db")
     raw_download_dir: Path = Field(default_factory=lambda: _default_data_root() / "raw")
     upload_dir: Path = Field(default_factory=lambda: _default_data_root() / "uploads")
+    manual_knowledge_dir: Path = Field(default_factory=lambda: Path("manual_files"))
     openai_api_key: str = ""
     openai_model: str = "gpt-5.4-mini"
     openai_fallback_models: str = "gpt-5.5,gpt-5.4,gpt-5-mini,gpt-4.1-mini"

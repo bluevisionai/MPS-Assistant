@@ -108,39 +108,42 @@ def run_desktop_scenarios(base_url: str, timeout: int) -> None:
         open_chat(driver, base_url, timeout)
 
         assert driver.find_element(By.ID, "ask-button").text == "Send"
-        assert len(driver.find_elements(By.CSS_SELECTOR, ".starter-chip")) == 5
+        WebDriverWait(driver, timeout).until(lambda d: count_visible(d, ".starter-chip") == 3)
+        assert len(driver.find_elements(By.CSS_SELECTOR, ".confidence-pill")) == 0
         assert len(driver.find_elements(By.CSS_SELECTOR, ".message-row-assistant")) == 1
-        assert driver.find_element(By.ID, "mode-caption").text == "Answers based only on official MPS South Africa sources."
+        assert application_panel_visible(driver) is False
 
         ask_question(driver, "What should I do if I receive a complaint?", timeout)
         wait_for_message_count(driver, 3, timeout)
         wait_for_assistant_sources(driver, timeout)
         assert len(driver.find_elements(By.CSS_SELECTOR, ".message-row-user")) == 1
+        assert application_panel_visible(driver) is False
 
-        ask_question(driver, "What about occupational therapist students?", timeout)
+        ask_question(driver, "How much does it cost to join?", timeout)
         wait_for_message_count(driver, 5, timeout)
         assert len(driver.find_elements(By.CSS_SELECTOR, ".message-row-user")) == 2
+
+        driver.refresh()
+        WebDriverWait(driver, timeout).until(lambda d: len(d.find_elements(By.CSS_SELECTOR, ".message-row-user")) == 2)
+
+        ask_question(driver, "Open the application", timeout)
+        wait_for_message_count(driver, 7, timeout)
+        wait_for_application_panel(driver, timeout)
+        assert application_panel_visible(driver) is True
 
         driver.find_element(By.ID, "toggle-chatbox").click()
         WebDriverWait(driver, timeout).until(lambda d: d.find_element(By.ID, "chat-launcher").is_displayed())
         driver.find_element(By.ID, "chat-launcher").click()
         WebDriverWait(driver, timeout).until(lambda d: d.find_element(By.ID, "chatbox-shell").get_attribute("class").find("is-open") >= 0)
 
-        driver.find_element(By.ID, "mode-apply").click()
-        WebDriverWait(driver, timeout).until(lambda d: d.find_element(By.ID, "new-chat").text == "Start again")
-        WebDriverWait(driver, timeout).until(
-            lambda d: "Complete the live membership draft in this chat." == d.find_element(By.ID, "mode-caption").text
-        )
-        WebDriverWait(driver, timeout).until(lambda d: len(d.find_elements(By.CSS_SELECTOR, ".journey-shell")) == 1)
-        driver.find_element(By.ID, "mode-knowledge").click()
-        WebDriverWait(driver, timeout).until(lambda d: d.find_element(By.ID, "new-chat").text == "New chat")
-
-        driver.refresh()
-        WebDriverWait(driver, timeout).until(lambda d: len(d.find_elements(By.CSS_SELECTOR, ".message-row-user")) == 2)
-
         driver.find_element(By.ID, "new-chat").click()
+        WebDriverWait(driver, timeout).until(lambda d: len(d.find_elements(By.CSS_SELECTOR, ".message-row-user")) == 0)
         WebDriverWait(driver, timeout).until(lambda d: len(d.find_elements(By.CSS_SELECTOR, ".message-row-assistant")) == 1)
-        assert len(driver.find_elements(By.CSS_SELECTOR, ".starter-chip")) == 5
+        WebDriverWait(driver, timeout).until(lambda d: application_panel_visible(d) is False)
+        assert count_visible(driver, ".starter-chip") == 3
+
+        driver.find_element(By.CSS_SELECTOR, ".starter-more-button").click()
+        WebDriverWait(driver, timeout).until(lambda d: count_visible(d, ".starter-chip") == 5)
 
 
 def run_mobile_scenarios(base_url: str, timeout: int) -> None:
@@ -150,10 +153,15 @@ def run_mobile_scenarios(base_url: str, timeout: int) -> None:
         open_chat(driver, base_url, timeout)
 
         assert driver.find_element(By.ID, "ask-button").text == "Send"
+        WebDriverWait(driver, timeout).until(lambda d: count_visible(d, ".starter-chip") == 3)
         ask_question(driver, "What file types can I upload in the application?", timeout)
         wait_for_message_count(driver, 3, timeout)
         wait_for_assistant_sources(driver, timeout)
         assert driver.find_element(By.ID, "ask-button").text == "Send"
+
+        ask_question(driver, "Open the application", timeout)
+        wait_for_application_panel(driver, timeout)
+        assert application_panel_visible(driver) is True
 
 
 def build_driver(width: int, height: int) -> webdriver.Chrome:
@@ -173,7 +181,7 @@ def open_chat(driver: webdriver.Chrome, base_url: str, timeout: int) -> None:
 
 
 def clear_session_state(driver: webdriver.Chrome) -> None:
-    driver.execute_script("window.sessionStorage.clear();")
+    driver.execute_script("window.localStorage.clear(); window.sessionStorage.clear();")
 
 
 def ask_question(driver: webdriver.Chrome, question: str, timeout: int) -> None:
@@ -181,7 +189,7 @@ def ask_question(driver: webdriver.Chrome, question: str, timeout: int) -> None:
     question_input.clear()
     question_input.send_keys(question)
     question_input.send_keys(Keys.ENTER)
-    WebDriverWait(driver, timeout).until(lambda d: d.find_element(By.ID, "ask-button").text in {"Processing...", "Send"})
+    WebDriverWait(driver, timeout).until(lambda d: d.find_element(By.ID, "ask-button").text in {"Thinking...", "Send"})
     WebDriverWait(driver, timeout).until(lambda d: d.find_element(By.ID, "ask-button").text == "Send")
 
 
@@ -191,6 +199,20 @@ def wait_for_message_count(driver: webdriver.Chrome, count: int, timeout: int) -
 
 def wait_for_assistant_sources(driver: webdriver.Chrome, timeout: int) -> None:
     WebDriverWait(driver, timeout).until(lambda d: len(d.find_elements(By.CSS_SELECTOR, ".message-row-assistant .message-sources")) >= 1)
+
+
+def wait_for_application_panel(driver: webdriver.Chrome, timeout: int) -> None:
+    WebDriverWait(driver, timeout).until(lambda d: application_panel_visible(d) is True)
+
+
+def application_panel_visible(driver: webdriver.Chrome) -> bool:
+    stage = driver.find_element(By.ID, "application-stage")
+    classes = stage.get_attribute("class") or ""
+    return "hidden" not in classes and len(driver.find_elements(By.CSS_SELECTOR, ".application-panel-shell")) == 1
+
+
+def count_visible(driver: webdriver.Chrome, selector: str) -> int:
+    return sum(1 for element in driver.find_elements(By.CSS_SELECTOR, selector) if element.is_displayed())
 
 
 def _is_port_open(host: str, port: int) -> bool:

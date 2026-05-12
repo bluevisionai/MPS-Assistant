@@ -25,6 +25,25 @@ from .semantic_intent import SemanticIntentAnalyzer, EnrichedResponseFormulator
 
 class KnowledgeBaseService:
     REFRESH_LOCK_KEY = "refresh_lock_expires_at"
+    MANUAL_SOURCE_PREFIX = "manual://"
+    MANUAL_SOURCE_ORIGIN = "manual_priority"
+    NOISE_SOURCE_PREFIXES = (
+        "https://geolocation.onetrust.com/",
+        "https://cdn-ukwest.onetrust.com/",
+        "https://mps-privacy.my.onetrust.com/",
+    )
+    DISALLOWED_REGION_MARKERS = (
+        "hong kong",
+        "hong kong hospital authority",
+        "greater bay area",
+        "mchk",
+        "malaysia",
+        "new zealand",
+        "singapore",
+        "ireland",
+        "caribbean",
+        "bermuda",
+    )
 
     def __init__(self, settings: Settings, database: Database) -> None:
         self.settings = settings
@@ -43,6 +62,7 @@ class KnowledgeBaseService:
 
     def initialize(self) -> None:
         self.database.init()
+        self._sync_manual_priority_sources()
 
     def has_content(self) -> bool:
         return self.database.stats()["source_count"] > 0
@@ -278,10 +298,10 @@ class KnowledgeBaseService:
         if refused:
             direct_answer = refusal
 
-        direct_answer = _humanize_section_text(direct_answer)
-        plain_english = _humanize_section_text(parsed["plain_english"].strip())
-        practical_next_steps = _humanize_section_text(parsed["practical_next_steps"].strip())
-        limitations = _humanize_section_text(parsed["limitations"].strip())
+        direct_answer = _humanize_section_text(_strip_inline_citations(direct_answer))
+        plain_english = _humanize_section_text(_strip_inline_citations(parsed["plain_english"].strip()))
+        practical_next_steps = _humanize_section_text(_strip_inline_citations(parsed["practical_next_steps"].strip()))
+        limitations = _humanize_section_text(_strip_inline_citations(parsed["limitations"].strip()))
         direct_answer = _collapse_short_bullets(direct_answer, max_items=3)
         plain_english = _collapse_short_bullets(plain_english, max_items=3)
         limitations = _collapse_short_bullets(limitations, max_items=2)
@@ -581,9 +601,28 @@ class KnowledgeBaseService:
         a = (answer_text or "").lower()
 
         if refused:
+            if any(term in q for term in ["benefit", "cover", "coverage", "protect", "indemnity"]):
+                return [
+                    "What benefits does MPS membership include for my role?",
+                    "What does MPS say is not included in this cover?",
+                ]
+            if any(term in q for term in ["cost", "price", "fee", "pay", "premium"]):
+                return [
+                    "What factors affect my membership price?",
+                    "Can I get a quote based on my working hours?",
+                ]
+            if any(term in q for term in ["apply", "application", "join", "signup", "register"]):
+                return [
+                    "What documents do I need to apply for membership?",
+                    "How do I start the MPS membership application?",
+                ]
+            if any(term in q for term in ["claim", "complaint", "incident", "legal"]):
+                return [
+                    "What should I do immediately after receiving a complaint?",
+                    "How can I contact MPS for urgent support?",
+                ]
             return [
-                "Can you show me what MPS says about membership benefits?",
-                "What are the application steps for joining MPS?",
+                "What can MPS help me with as a member?",
                 "How can I contact MPS for this specific question?",
             ]
 
@@ -702,6 +741,8 @@ class KnowledgeBaseService:
             chunk = by_id.get(chunk_id)
             if chunk is None:
                 continue
+            if self._should_exclude_retrieved_chunk(chunk):
+                continue
             chunk.combined_score = float(metadata["score"]) + self._retrieval_boost(question, chunk)
             chunk.lexical_rank = metadata["lexical_rank"]
             chunk.semantic_rank = metadata["semantic_rank"]
@@ -726,6 +767,7 @@ class KnowledgeBaseService:
                 self._store_document(document)
                 seen_source_keys.append(document.source_key)
             self.database.mark_missing_website_sources_stale(seen_source_keys)
+            self._sync_manual_priority_sources()
             self.last_refresh_completed_at = _utc_now()
             self.last_refresh_error = None
             self.database.set_meta("last_refresh_completed_at", self.last_refresh_completed_at)
@@ -815,6 +857,9 @@ class KnowledgeBaseService:
                     text=str(row["text"]),
                     heading=row["heading"],
                     page_number=row["page_number"],
+                    origin=row["origin"],
+                    source_key=row["source_key"],
+                    local_path=row["local_path"],
                     url=row["url"],
                     page_title=row["page_title"],
                     document_title=row["document_title"],
@@ -872,6 +917,12 @@ class KnowledgeBaseService:
             elif term in body_text:
                 boost += 0.003
 
+        if self._is_manual_priority_chunk(chunk):
+            if any(term in body_text or term in metadata_text for term in terms):
+                boost += 0.18
+            else:
+                boost += 0.02
+
         if any(term in terms for term in {"application", "form", "join"}) and (
             "apply.medicalprotection.org" in (chunk.url or "")
             or "application" in metadata_text
@@ -898,11 +949,112 @@ class KnowledgeBaseService:
         if "page" in terms and chunk.page_number == 1:
             boost += 0.005
 
+        if self._is_south_africa_or_namibia_chunk(chunk):
+            boost += 0.025
+        elif chunk.origin == "application_walkthrough":
+            boost += 0.01
+
+        if (chunk.source_key or chunk.url or "").startswith("http://"):
+            boost -= 0.01
+
         return boost
+
+    def _sync_manual_priority_sources(self) -> None:
+        manual_dir = self.settings.manual_knowledge_dir
+        if not manual_dir.exists() or not manual_dir.is_dir():
+            return
+
+        seen_source_keys: List[str] = []
+        for path in sorted(manual_dir.rglob("*")):
+            if not path.is_file() or path.name.startswith("."):
+                continue
+
+            source_key = f"{self.MANUAL_SOURCE_PREFIX}{path.relative_to(manual_dir).as_posix()}"
+            try:
+                document = extract_file_document(
+                    source_key=source_key,
+                    origin=self.MANUAL_SOURCE_ORIGIN,
+                    path=path,
+                    downloaded_at=_file_timestamp(path),
+                    url=None,
+                    content_type=None,
+                )
+            except Exception:
+                continue
+
+            self._store_document(document)
+            seen_source_keys.append(source_key)
+
+        self.database.mark_missing_sources_stale(
+            self.MANUAL_SOURCE_ORIGIN,
+            seen_source_keys,
+            stale_all_if_empty=True,
+        )
+
+    def _should_exclude_retrieved_chunk(self, chunk: RetrievedChunk) -> bool:
+        source_key = (chunk.source_key or chunk.url or "").lower()
+        if any(source_key.startswith(prefix) for prefix in self.NOISE_SOURCE_PREFIXES):
+            return True
+
+        body_text = (chunk.text or "").lower()
+        metadata_text = " ".join(
+            filter(
+                None,
+                [
+                    chunk.document_title,
+                    chunk.page_title,
+                    chunk.file_name,
+                    chunk.source_key,
+                ],
+            )
+        ).lower()
+
+        if any(marker in body_text or marker in metadata_text for marker in self.DISALLOWED_REGION_MARKERS):
+            return True
+
+        return False
+
+    def _is_manual_priority_chunk(self, chunk: RetrievedChunk) -> bool:
+        return (
+            chunk.origin == self.MANUAL_SOURCE_ORIGIN
+            or (chunk.source_key or "").startswith(self.MANUAL_SOURCE_PREFIX)
+            or "manual_files/" in (chunk.local_path or "").replace("\\", "/")
+        )
+
+    def _is_south_africa_or_namibia_chunk(self, chunk: RetrievedChunk) -> bool:
+        metadata_text = " ".join(
+            filter(
+                None,
+                [
+                    chunk.document_title,
+                    chunk.page_title,
+                    chunk.file_name,
+                    chunk.source_key,
+                    chunk.url,
+                ],
+            )
+        ).lower()
+        body_text = (chunk.text or "").lower()[:1400]
+        relevant_markers = (
+            "south africa",
+            "south-africa",
+            "rsa",
+            "namibia",
+            "/southafrica",
+            "/za/",
+            "hpcsa",
+            "hpcna",
+            "consumer protection act",
+        )
+        return any(marker in metadata_text or marker in body_text for marker in relevant_markers)
 
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _file_timestamp(path: Path) -> str:
+    return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
 
 
 def _significant_terms(text: str) -> List[str]:
@@ -1008,6 +1160,17 @@ def _looks_like_refusal(answer_text: str, refusal_text: str) -> bool:
         return normalized
 
     return normalize(answer_text) == normalize(refusal_text)
+
+
+def _strip_inline_citations(text: str) -> str:
+    if not text:
+        return ""
+
+    cleaned = re.sub(r"\s*\[(\d+)\]", "", text)
+    cleaned = re.sub(r"\(\s*\)", "", cleaned)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r" ?\n", "\n", cleaned)
+    return cleaned.strip()
 
 
 def _humanize_section_text(text: str) -> str:

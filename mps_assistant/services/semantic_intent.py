@@ -230,9 +230,10 @@ class EnrichedResponseFormulator:
                     {
                         "role": "system",
                         "content": (
-                            "You are MPS Assistant. Answer based ONLY on provided MPS excerpts. "
+                            "You are Medical Protection's chat assistant for South Africa. Answer based ONLY on provided MPS excerpts. "
                             "Address the user's underlying intent, not just literal question. "
-                            "Use citations [1], [2] etc. Be concise and practical."
+                            "Use citations [1], [2] etc. Be concise and practical. Use first-person plural such as "
+                            "\"we\" and \"our\" for member-facing wording instead of referring to Medical Protection in the third person."
                         ),
                     },
                     {"role": "user", "content": prompt},
