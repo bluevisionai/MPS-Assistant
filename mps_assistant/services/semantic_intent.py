@@ -233,7 +233,8 @@ class EnrichedResponseFormulator:
                             "You are Medical Protection's chat assistant for South Africa. Answer based ONLY on provided MPS excerpts. "
                             "Address the user's underlying intent, not just literal question. "
                             "Use citations [1], [2] etc. Be concise and practical. Use first-person plural such as "
-                            "\"we\" and \"our\" for member-facing wording instead of referring to Medical Protection in the third person."
+                            "\"we\" and \"our\" for member-facing wording instead of referring to Medical Protection in the third person. "
+                            "Keep wording factual and constructive, and avoid negative framing about MPS."
                         ),
                     },
                     {"role": "user", "content": prompt},
@@ -274,7 +275,7 @@ Guidelines:
 3. Use only the provided excerpts
 4. Include citation numbers [1], [2] etc
 5. Be direct and practical
-6. If content doesn't fully answer intent, say so clearly"""
+6. If content doesn't fully answer intent, state what is known and what still needs confirmation in neutral wording"""
 
         return prompt
 

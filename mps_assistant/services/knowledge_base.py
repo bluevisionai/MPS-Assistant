@@ -138,7 +138,7 @@ class KnowledgeBaseService:
             raise ValueError("Question cannot be empty.")
 
         conversation_history = _normalize_conversation_history(messages, question)
-        refusal = "I don't have enough MPS-provided information to answer that confidently."
+        refusal = "I don't yet have enough verified information in this assistant's MPS knowledge base to answer that confidently."
 
         import sys
         print(f"[DEBUG] Original question: {question}", file=sys.stderr)
@@ -208,9 +208,9 @@ class KnowledgeBaseService:
             return ChatResponse(
                 direct_answer=refusal,
                 sources=[],
-                plain_english="I could not find matching content in the MPS knowledge base.",
-                practical_next_steps="Try rephrasing the question or refresh the official MPS site content.",
-                limitations="The current knowledge base does not contain supporting MPS passages for this question.",
+                plain_english="I could not find a close match in the currently indexed MPS content.",
+                practical_next_steps="Try rephrasing with more specific details, or check the relevant page on the official MPS site.",
+                limitations="This assistant currently has limited indexed content for this question.",
                 refused=True,
                 follow_up_suggestions=follow_ups,
                 confidence_score=confidence_score,
@@ -589,7 +589,7 @@ class KnowledgeBaseService:
         escalation_message = None
         if should_escalate:
             escalation_message = (
-                "I may not have enough high-confidence MPS evidence for this specific question. "
+                "I may not have enough high-confidence evidence in the current assistant context for this specific question. "
                 "Please confirm with MPS support before taking action."
             )
 
