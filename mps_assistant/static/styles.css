@@ -160,6 +160,14 @@ input {
   flex-wrap: wrap;
   justify-content: flex-end;
   flex-shrink: 0;
+  align-items: center;
+}
+
+.header-apply-button {
+  min-height: 40px;
+  padding: 0 16px;
+  white-space: nowrap;
+  box-shadow: 0 10px 20px rgba(0, 123, 194, 0.18);
 }
 
 .icon-button,
@@ -1997,6 +2005,10 @@ input[type="file"]:focus {
   .header-actions .icon-button {
     flex: 1 1 0;
     min-width: 0;
+  }
+
+  .header-actions .header-apply-button {
+    flex: 1 1 100%;
   }
 
   .messages-stage.is-empty .messages-list {

@@ -43,6 +43,7 @@ const questionInput = document.getElementById("question-input")
 const toggleChatbox = document.getElementById("toggle-chatbox")
 const toggleAnalytics = document.getElementById("toggle-analytics")
 const newChatButton = document.getElementById("new-chat")
+const openApplicationButton = document.getElementById("open-application")
 const chatboxShell = document.getElementById("chatbox-shell")
 const chatLauncher = document.getElementById("chat-launcher")
 const analyticsDashboard = document.getElementById("analytics-dashboard")
@@ -1064,14 +1065,11 @@ function detectApplicationStartIntent(question) {
   )
 }
 
-function maybeOpenApplicationJourneyFromQuestion(question) {
-  if (!detectApplicationStartIntent(question)) {
-    return
-  }
-
+function openApplicationJourney(scrollMode = "latest") {
   const app = applicationState()
   app.workflowState = "active"
   app.cardVisible = true
+  clearApplicationFeedback()
 
   if (uiState.applicationConversation.length === 0) {
     seedApplicationConversation()
@@ -1080,10 +1078,18 @@ function maybeOpenApplicationJourneyFromQuestion(question) {
   void ensureOnboardingConfig().catch((error) => {
     setApplicationError(error.message || "The application context could not be loaded right now.")
     saveUiState()
-    renderApp("latest")
+    renderApp(scrollMode)
   })
   saveUiState()
-  renderApp("latest")
+  renderApp(scrollMode)
+}
+
+function maybeOpenApplicationJourneyFromQuestion(question) {
+  if (!detectApplicationStartIntent(question)) {
+    return
+  }
+
+  openApplicationJourney("latest")
 }
 
 function handleApplicationPromptCommand(question) {
@@ -1112,16 +1118,7 @@ function handleApplicationPromptCommand(question) {
         "Application stopped for now. Your progress is saved. Type 'resume application' to continue later.",
     })
   } else {
-    app.workflowState = "active"
-    app.cardVisible = true
-    if (uiState.applicationConversation.length === 0) {
-      seedApplicationConversation()
-    }
-    void ensureOnboardingConfig().catch((error) => {
-      setApplicationError(error.message || "The application context could not be loaded right now.")
-      saveUiState()
-      renderApp("latest")
-    })
+    openApplicationJourney("latest")
     uiState.knowledgeConversation.push({
       role: "assistant",
       content: hasSavedApplicationProgress()
@@ -2786,6 +2783,12 @@ if (toggleChatbox) {
 chatLauncher.addEventListener("click", () => {
   setChatboxOpen(true)
 })
+
+if (openApplicationButton) {
+  openApplicationButton.addEventListener("click", () => {
+    openApplicationJourney("latest")
+  })
+}
 
 if (newChatButton) {
   newChatButton.addEventListener("click", () => {

@@ -111,6 +111,7 @@ def run_desktop_scenarios(base_url: str, timeout: int) -> None:
         WebDriverWait(driver, timeout).until(lambda d: count_visible(d, ".starter-chip") == 3)
         assert len(driver.find_elements(By.CSS_SELECTOR, ".confidence-pill")) == 0
         assert len(driver.find_elements(By.CSS_SELECTOR, ".message-row-assistant")) == 1
+        assert driver.find_element(By.ID, "open-application").text == "Apply now"
         assert application_panel_visible(driver) is False
 
         ask_question(driver, "What should I do if I receive a complaint?", timeout)
@@ -126,8 +127,7 @@ def run_desktop_scenarios(base_url: str, timeout: int) -> None:
         driver.refresh()
         WebDriverWait(driver, timeout).until(lambda d: len(d.find_elements(By.CSS_SELECTOR, ".message-row-user")) == 2)
 
-        ask_question(driver, "Open the application", timeout)
-        wait_for_message_count(driver, 7, timeout)
+        driver.find_element(By.ID, "open-application").click()
         wait_for_application_panel(driver, timeout)
         assert application_panel_visible(driver) is True
 
@@ -154,12 +154,13 @@ def run_mobile_scenarios(base_url: str, timeout: int) -> None:
 
         assert driver.find_element(By.ID, "ask-button").text == "Send"
         WebDriverWait(driver, timeout).until(lambda d: count_visible(d, ".starter-chip") == 3)
+        assert driver.find_element(By.ID, "open-application").is_displayed()
         ask_question(driver, "What file types can I upload in the application?", timeout)
         wait_for_message_count(driver, 3, timeout)
         wait_for_assistant_sources(driver, timeout)
         assert driver.find_element(By.ID, "ask-button").text == "Send"
 
-        ask_question(driver, "Open the application", timeout)
+        driver.find_element(By.ID, "open-application").click()
         wait_for_application_panel(driver, timeout)
         assert application_panel_visible(driver) is True
 
