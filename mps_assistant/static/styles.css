@@ -164,6 +164,14 @@ input {
   margin-left: auto;
 }
 
+.header-actions-pair {
+  display: flex;
+  flex-direction: row;
+  gap: 6px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
 .header-apply-button {
   min-height: 32px;
   padding: 0 12px;
