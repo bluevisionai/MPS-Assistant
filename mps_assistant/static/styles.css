@@ -156,16 +156,18 @@ input {
 
 .header-actions {
   display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
+  flex-direction: column;
+  gap: 6px;
+  justify-content: flex-start;
+  align-items: flex-end;
   flex-shrink: 0;
-  align-items: center;
+  margin-left: auto;
 }
 
 .header-apply-button {
-  min-height: 40px;
-  padding: 0 16px;
+  min-height: 32px;
+  padding: 0 12px;
+  font-size: 0.8rem;
   white-space: nowrap;
   box-shadow: 0 10px 20px rgba(0, 123, 194, 0.18);
 }
@@ -203,8 +205,9 @@ input {
 }
 
 .icon-button {
-  min-height: 38px;
-  padding: 0 14px;
+  min-height: 32px;
+  padding: 0 12px;
+  font-size: 0.8rem;
   background: rgba(255, 255, 255, 0.92);
   color: var(--mps-blue-deep);
   border: 1px solid rgba(0, 123, 194, 0.18);
@@ -1998,17 +2001,19 @@ input[type="file"]:focus {
 
   .header-actions {
     gap: 6px;
-    width: 100%;
-    justify-content: stretch;
+    width: auto;
+    align-self: flex-end;
+    justify-content: flex-start;
+    align-items: flex-end;
   }
 
   .header-actions .icon-button {
-    flex: 1 1 0;
+    flex: 0 0 auto;
     min-width: 0;
   }
 
   .header-actions .header-apply-button {
-    flex: 1 1 100%;
+    flex: 0 0 auto;
   }
 
   .messages-stage.is-empty .messages-list {

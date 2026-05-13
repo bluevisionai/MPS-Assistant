@@ -1,8 +1,8 @@
 {
-  "generated_at_utc": "2026-05-08T15:30:05Z",
+  "generated_at_utc": "2026-05-13T01:28:32Z",
   "source_data_dir": "data",
   "bundle": "mps_data_bundle.tgz",
-  "bundle_size_bytes": 34822600,
+  "bundle_size_bytes": 36640067,
   "raw_file_count": 17,
   "upload_file_count": 1
 }
